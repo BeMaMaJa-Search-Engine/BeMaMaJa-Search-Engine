@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import urllib.robotparser
+from collections import deque
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -116,7 +117,9 @@ class CrawlerState:
         polite_delay: float,
     ) -> None:
         self.lock = threading.Lock()
-        self.frontier = frontier
+        # Queue (deque) for O(1) push/pop from either end, plus a set mirror for O(1) "is this URL already queued" membership checks
+        self.frontier: deque[str] = deque(frontier)
+        self.frontier_set: set[str] = set(frontier)
         self.pages = pages
         self.visited_entries = visited_entries
         self.visited_urls = {item.get("url") for item in visited_entries}
@@ -156,21 +159,34 @@ class CrawlerState:
                 return None, "done"
 
             now = time.time()
-            i = 0
-            while i < len(self.frontier):
-                url = self.frontier[i]
+            # Drain the deque, collecting URLs whose domain is still on cooldown into a temporary list. Once we either claim a URL or
+            # exhaust the queue, push everything we set aside back onto the front of the deque, in the same order it was in originally.
+            skipped: list[str] = []
+            claimed_url: str | None = None
+            while self.frontier:
+                url = self.frontier.popleft()
+                self.frontier_set.discard(url)
+
                 if url in self.visited_urls or not is_probably_html_url(url):
-                    del self.frontier[i]
                     continue
+
                 domain = get_domain(url)
                 if now >= self.domain_next_time.get(domain, 0.0):
-                    del self.frontier[i]
                     # Reserve this domain's next slot immediately, so a second worker can't grab another URL for the same domain before this fetch starts.
                     self.domain_next_time[domain] = now + self.polite_delay
                     self.in_flight += 1
                     self.attempted += 1
-                    return url, "ok"
-                i += 1
+                    claimed_url = url
+                    break
+
+                skipped.append(url)
+
+            for url in reversed(skipped):
+                self.frontier.appendleft(url)
+                self.frontier_set.add(url)
+
+            if claimed_url is not None:
+                return claimed_url, "ok"
 
             if not self.frontier and self.in_flight == 0:
                 self.stop_event.set()
@@ -188,8 +204,9 @@ class CrawlerState:
     def add_links(self, links: list[str]) -> None:
         with self.lock:
             for link in links:
-                if link not in self.visited_urls and link not in self.frontier:
+                if link not in self.visited_urls and link not in self.frontier_set:
                     self.frontier.append(link)
+                    self.frontier_set.add(link)
 
     def record_visited(self, url: str, status_code: Any) -> None:
         with self.lock:

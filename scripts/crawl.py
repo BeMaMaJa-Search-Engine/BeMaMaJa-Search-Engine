@@ -41,7 +41,7 @@ def main() -> None:
     parser.add_argument(
         "--checkpoint-every",
         type=int,
-        default=1,
+        default=10,
         help="Write frontier/visited/pages to disk every N attempted fetches, so an interrupted run (Ctrl-C) can be resumed later instead of restarting.",
     )
     args = parser.parse_args()
