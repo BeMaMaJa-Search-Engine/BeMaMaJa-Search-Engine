@@ -12,13 +12,11 @@ from src.utils import read_json, short_snippet, write_json
 # Unicode-aware tokenizer: matches runs of letters/digits from any script (ä, ö, ü, ß)
 TOKEN_PATTERN = re.compile(r"[^\W_]+", re.UNICODE)
 
-# Precompiled patterns for Tübingen spelling normalization (avoids recompiling on every call)
+# Precompiled patterns for Tübingen spelling normalization
 TUEBINGEN_UMLAUT_RE = re.compile(r"tübingen", re.IGNORECASE)
 TUEBINGEN_ASCII_RE = re.compile(r"\btuebingen\b", re.IGNORECASE)
 TUEBINGEN_UBINGEN_RE = re.compile(r"\btubingen\b", re.IGNORECASE)
 
-# Path to the stats output file: <project>/data/preprocessor_summary.json
-# This file lives at <project>/src/preprocessing.py, so we go up one level to <project>/
 SUMMARY_OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "preprocessor_summary.json"
 
 # Below this many pages we just run sequentially.

@@ -142,6 +142,7 @@ class CrawlerState:
         self.attempted = 0
         self.saved = 0
         self.in_flight = 0  # URLs currently being fetched/processed by a worker
+        self.in_flight_urls: set[str] = set()
         self.interrupted = False
         self.stop_event = threading.Event()
 
@@ -179,6 +180,7 @@ class CrawlerState:
                     # Reserve this domain's next slot immediately, so a second worker can't grab another URL for the same domain before this fetch starts.
                     self.domain_next_time[domain] = now + self.polite_delay
                     self.in_flight += 1
+                    self.in_flight_urls.add(url)
                     self.attempted += 1
                     claimed_url = url
                     break
@@ -197,10 +199,11 @@ class CrawlerState:
                 return None, "done"
             return None, "wait"
 
-    def finish_url(self, domain: str, finished_at: float) -> None:
+    def finish_url(self, domain: str, url: str, finished_at: float) -> None:
         """Release the in-flight slot and make sure the domain's cooldown reflects when the fetch actually completed."""
         with self.lock:
             self.in_flight -= 1
+            self.in_flight_urls.discard(url)
             candidate = finished_at + self.polite_delay
             if candidate > self.domain_next_time.get(domain, 0.0):
                 self.domain_next_time[domain] = candidate
@@ -208,7 +211,11 @@ class CrawlerState:
     def add_links(self, links: list[str]) -> None:
         with self.lock:
             for link in links:
-                if link not in self.visited_urls and link not in self.frontier_set:
+                if (
+                    link not in self.visited_urls
+                    and link not in self.frontier_set
+                    and link not in self.in_flight_urls
+                ):
                     self.frontier.append(link)
                     self.frontier_set.add(link)
 
@@ -247,7 +254,7 @@ class CrawlerState:
                 self.stop_event.set()
             return "saved", page["doc_id"], total_pages, over_cap
 
-    def robots_allowed(self, url: str, user_agent: str) -> bool:
+    def robots_allowed(self, url: str, user_agent: str, session: requests.Session, timeout: float) -> bool:
         """Check robots.txt (cached per host) to see if we're allowed to fetch this URL."""
         parsed = urlparse(url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
@@ -257,10 +264,17 @@ class CrawlerState:
             parser = urllib.robotparser.RobotFileParser()
             parser.set_url(robots_url)
             try:
-                parser.read()
-            except Exception:
-                # If robots.txt can't be fetched/parsed, default to allowing the crawl
+                response = session.get(robots_url, timeout=timeout)
+            except requests.RequestException:
+                # If robots.txt can't be fetched within the timeout, default to allowing the crawl
                 return True
+            # Mirror RobotFileParser.read() own status-code handling
+            if response.status_code in (401, 403):
+                parser.disallow_all = True
+            elif response.status_code >= 400:
+                parser.allow_all = True
+            else:
+                parser.parse(response.text.splitlines())
             with self.robots_lock:
                 self.robots_cache[robots_url] = parser
         try:
@@ -309,9 +323,11 @@ def _process_url(state: CrawlerState, session: requests.Session, worker_id: int,
     domain = get_domain(url)
     status_code: Any = None
     reason = "unknown"
+    visited_recorded = False
     try:
-        if not state.robots_allowed(url, USER_AGENT):
+        if not state.robots_allowed(url, USER_AGENT, session, timeout):
             state.record_visited(url, "robots_blocked")
+            visited_recorded = True
             reason = "skipped: blocked by robots.txt"
             return
 
@@ -320,6 +336,7 @@ def _process_url(state: CrawlerState, session: requests.Session, worker_id: int,
         fetched_url = normalize_url(response.url)
         content_type = response.headers.get("content-type", "")
         state.record_visited(url, status_code)
+        visited_recorded = True
 
         if status_code != 200 or "text/html" not in content_type.lower():
             reason = f"skipped: not a 200 html response (status={status_code}, content-type={content_type})"
@@ -364,11 +381,16 @@ def _process_url(state: CrawlerState, session: requests.Session, worker_id: int,
             reason = f"skipped: canonical url already saved ({canonical_url})"
     except requests.RequestException as exc:
         reason = f"skipped: request error: {exc}"
-        state.record_visited(url, status_code or "request_error")
+        if not visited_recorded:
+            state.record_visited(url, status_code or "request_error")
+    except Exception as exc:
+        reason = f"skipped: unexpected error: {type(exc).__name__}: {exc}"
+        if not visited_recorded:
+            state.record_visited(url, status_code or "error")
     finally:
         elapsed_ms = (time.time() - state.start_time) * 1000
         print(f"worker={worker_id} t+{elapsed_ms:.0f}ms domain={domain} url={url} {reason}")
-        state.finish_url(domain, time.time())
+        state.finish_url(domain, url, time.time())
 
 
 def _worker_loop(state: CrawlerState, worker_id: int, timeout: float, checkpoint_paths: tuple[Path, Path, Path]) -> None:
@@ -461,8 +483,12 @@ def crawl(
         state.interrupted = True
         state.stop_event.set()
         print("interrupted by user (Ctrl-C) - waiting for in-flight requests to finish, then saving progress so the crawl can be resumed later")
+        join_deadline = timeout + 2
         for t in threads:
-            t.join()
+            t.join(timeout=join_deadline)
+            if t.is_alive():
+                # This worker is stuck past its request timeout
+                print(f"warning: {t.name} did not finish within {join_deadline:.0f}s, abandoning it (it may still be running in the background)")
 
     pages, frontier, visited_entries = state.snapshot_for_checkpoint()
 
