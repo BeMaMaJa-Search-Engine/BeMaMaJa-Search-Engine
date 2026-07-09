@@ -34,6 +34,7 @@ def main() -> None:
     print(f"Documents: {summary['num_docs']}")
     print(f"Vocabulary size: {summary['vocabulary_size']}")
     print(f"Average document length: {summary['average_document_length']}")
+    print(f"Index file size MB: {summary['index_file_size_mb']}")
     print(f"Elapsed seconds: {summary['elapsed_seconds']}")
     print(f"Output: {args.output}")
     print(f"Summary output: {args.summary_output}")

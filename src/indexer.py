@@ -126,8 +126,9 @@ def compute_average_document_length(documents: list[dict]) -> float:
 
 def build_link_graph(documents: list[dict]) -> dict[str, list[int]]:
     """Build an internal link graph between indexed documents."""
+    
+    # Build a mapping from URLs to document IDs for quick lookup
     url_to_doc_id: dict[str, int] = {}
-
     for document in documents:
         doc_id = document.get("doc_id")
         if doc_id is None:
@@ -143,6 +144,7 @@ def build_link_graph(documents: list[dict]) -> dict[str, list[int]]:
         if canonical_url:
             url_to_doc_id[canonical_url] = doc_id
 
+    # Build the link graph by mapping each document to the outgoing links
     link_graph: dict[str, list[int]] = {}
     for document in documents:
         doc_id = document.get("doc_id")
@@ -209,6 +211,7 @@ def build_index(
     with index_output_path.open("w", encoding="utf-8") as file:
         json.dump(index, file, indent=2, ensure_ascii=False)
 
+    summary["index_file_size_mb"] = round(index_output_path.stat().st_size / (1024 * 1024), 2)
     summary["elapsed_seconds"] = round(time.perf_counter() - start_time, 4)
 
     summary_path = Path(summary_output_path)
