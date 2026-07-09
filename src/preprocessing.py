@@ -245,6 +245,8 @@ def preprocess(text: str, use_stemming: bool = True) -> list[str]:
         raise RuntimeError("NLTK PorterStemmer is required for stemming. Install nltk first.")
 
     if use_stemming:
+        # extra Check für den Type-Checker
+        assert PORTER_STEMMER is not None
         tokens = [PORTER_STEMMER.stem(token) for token in tokens]
 
     return tokens
