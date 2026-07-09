@@ -486,6 +486,7 @@ def crawl(
     polite_delay: float = 0.6,
     checkpoint_every: int = 5,
     workers: int = 4,
+    fresh: bool = False,
 ) -> dict[str, Any]:
     """Run the crawl: fetch frontier URLs (frontier_high first, then frontier_low) with `workers` concurrent
     threads, filter/save relevant pages, and persist crawler state."""
@@ -494,20 +495,28 @@ def crawl(
     visited_path = Path(visited_path)
     start_time = time.time()
 
-    # Load any previously saved pages, and resume both frontiers from disk (or from 0).
-    # Both queues live in one frontier.json: {"frontier_high": [...], "frontier_low": [...]}.
-    raw = read_json(raw_pages_path, {"pages": []})
-    pages = raw.get("pages", [])
-    frontier_data = read_json(frontier_path, {"frontier_high": [], "frontier_low": []})
-    frontier_high = frontier_data.get("frontier_high", [])
-    frontier_low = frontier_data.get("frontier_low", [])
-    if not frontier_high and not frontier_low:
-        # Fresh start: seed URLs are presumed Tuebingen-relevant, so they go straight into frontier_high.
+    if fresh:
+        # Ignore anything on disk and start over from just the seeds.
+        pages = []
         frontier_high = load_seed_urls(seeds_path)
+        frontier_low = []
+        visited_entries = []
+        print("--fresh: discarding any existing raw_pages.json/frontier.json/visited.json and starting from seeds")
+    else:
+        # Load any previously saved pages, and resume both frontiers from disk (or from 0).
+        # Both queues live in one frontier.json: {"frontier_high": [...], "frontier_low": [...]}.
+        raw = read_json(raw_pages_path, {"pages": []})
+        pages = raw.get("pages", [])
+        frontier_data = read_json(frontier_path, {"frontier_high": [], "frontier_low": []})
+        frontier_high = frontier_data.get("frontier_high", [])
+        frontier_low = frontier_data.get("frontier_low", [])
+        if not frontier_high and not frontier_low:
+            # Fresh start: seed URLs are presumed Tuebingen-relevant, so they go straight into frontier_high.
+            frontier_high = load_seed_urls(seeds_path)
 
-    # Load which URLs were already visited, so we don't refetch them across runs
-    visited_data = read_json(visited_path, {"visited": []})
-    visited_entries = visited_data.get("visited", [])
+        # Load which URLs were already visited, so we don't refetch them across runs
+        visited_data = read_json(visited_path, {"visited": []})
+        visited_entries = visited_data.get("visited", [])
 
     state = CrawlerState(
         frontier_high=frontier_high,
@@ -521,7 +530,7 @@ def crawl(
 
     print(
         f"starting crawl: {len(frontier_high)} urls in frontier_high, {len(frontier_low)} urls in frontier_low, "
-        f"{len(pages)} pages already saved, max_pages={max_pages}, workers={workers}"
+        f"{len(pages)} pages already saved, max_pages={max_pages}, workers={workers}, fresh={fresh}"
     )
 
     checkpoint_paths = (raw_pages_path, frontier_path, visited_path)
@@ -567,26 +576,38 @@ def crawl(
         visited_entries,
     )
     elapsed_seconds = time.time() - start_time
+
+    # Merge this run's counts into the running totals so far, so the summary file stays a single object that accumulates across runs.
+    summary_path = raw_pages_path.parent / "crawl_summary.json"
+    zeroed_totals = {"runs_completed": 0, "attempted_urls_total": 0, "elapsed_seconds_total": 0.0, "interrupted_runs": 0}
+    prior = zeroed_totals if fresh else read_json(summary_path, zeroed_totals)
+
     summary = {
         "step": "crawling",
-        "saved_pages": state.saved,
+        "runs_completed": prior.get("runs_completed", 0) + 1,
         "total_pages": len(pages),
-        "attempted_urls": state.attempted,
+        "attempted_urls_this_run": state.attempted,
+        "attempted_urls_total": prior.get("attempted_urls_total", 0) + state.attempted,
         "frontier_high_size": len(frontier_high),
         "frontier_low_size": len(frontier_low),
         "visited_size": len(visited_entries),
         "timeout": timeout,
         "polite_delay": polite_delay,
         "workers": workers,
-        "interrupted": state.interrupted,
-        "elapsed_seconds": round(elapsed_seconds, 2),
-        "elapsed_human": _format_elapsed(elapsed_seconds),
+        "last_run_interrupted": state.interrupted,
+        "interrupted_runs": prior.get("interrupted_runs", 0) + (1 if state.interrupted else 0),
+        "elapsed_seconds_this_run": round(elapsed_seconds, 2),
+        "elapsed_human_this_run": _format_elapsed(elapsed_seconds),
+        "elapsed_seconds_total": round(prior.get("elapsed_seconds_total", 0.0) + elapsed_seconds, 2),
+        "elapsed_human_total": _format_elapsed(prior.get("elapsed_seconds_total", 0.0) + elapsed_seconds),
+        "started_fresh_last_run": fresh,
+        "last_updated": now_utc_iso(),
     }
-    write_json(raw_pages_path.parent / "crawl_summary.json", summary)
+    write_json(summary_path, summary)
     status = "interrupted" if state.interrupted else "done"
     print(
         f"{status}: saved={state.saved} attempted={state.attempted} "
         f"frontier_high_remaining={len(frontier_high)} frontier_low_remaining={len(frontier_low)} "
-        f"elapsed={summary['elapsed_human']}"
+        f"elapsed={summary['elapsed_human_this_run']}"
     )
     return summary

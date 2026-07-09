@@ -44,6 +44,14 @@ def main() -> None:
         default=10,
         help="Write frontier/visited/pages to disk every N attempted fetches, so an interrupted run (Ctrl-C) can be resumed later instead of restarting.",
     )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help=(
+            "Start over from just the seed URLs, discarding any existing raw_pages.json, frontier.json, and visited.json instead of resuming from them. "
+            "Also resets crawl_summary.json to contain only this run's stats, instead of appending to the runs from previous crawls."
+        ),
+    )
     args = parser.parse_args()
     summary = crawl(
         max_pages=args.max_pages,
@@ -51,6 +59,7 @@ def main() -> None:
         polite_delay=args.polite_delay,
         checkpoint_every=args.checkpoint_every,
         workers=args.workers,
+        fresh=args.fresh,
     )
     print(summary)
 
