@@ -110,7 +110,8 @@ class CrawlerState:
 
     def __init__(
         self,
-        frontier: list[str],
+        frontier_high: list[str],
+        frontier_low: list[str],
         pages: list[dict[str, Any]],
         visited_entries: list[dict[str, Any]],
         max_pages: int,
@@ -119,9 +120,12 @@ class CrawlerState:
     ) -> None:
         self.start_time = time.time()
         self.lock = threading.Lock()
-        # Queue (deque) for O(1) push/pop from either end, plus a set mirror for O(1) "is this URL already queued" membership checks
-        self.frontier: deque[str] = deque(frontier)
-        self.frontier_set: set[str] = set(frontier)
+        # Two queues (deque) for O(1) push/pop from either end, plus set mirrors for O(1) "is this URL already queued" membership checks.
+        # frontier_high holds links discovered on a Tuebingen-related page (checked first); frontier_low holds everything else.
+        self.frontier_high: deque[str] = deque(frontier_high)
+        self.frontier_high_set: set[str] = set(frontier_high)
+        self.frontier_low: deque[str] = deque(frontier_low)
+        self.frontier_low_set: set[str] = set(frontier_low)
         self.pages = pages
         self.visited_entries = visited_entries
         self.visited_urls = {item.get("url") for item in visited_entries}
@@ -151,12 +155,49 @@ class CrawlerState:
         self.robots_cache: dict[str, urllib.robotparser.RobotFileParser] = {}
 
 
-    def claim_next_url(self) -> tuple[str | None, str]:
-        """Try to claim the next URL that is both in the frontier and not on its domain's cooldown.
+    def _claim_from_queue(self, queue: deque[str], queue_set: set[str], now: float) -> str | None:
+        """Drain-and-restore scan of a single frontier queue for a URL whose domain is off cooldown.
 
+        Must be called while holding self.lock. Collects URLs whose domain is still on cooldown
+        into a temporary list; once a URL is claimed or the queue is exhausted, pushes everything
+        set aside back onto the front of the deque, in the same order it was in originally.
+        """
+        skipped: list[str] = []
+        claimed_url: str | None = None
+        while queue:
+            url = queue.popleft()
+            queue_set.discard(url)
+
+            if url in self.visited_urls or not is_probably_html_url(url):
+                continue
+
+            try:
+                domain = get_domain(url)
+            except Exception:
+                # Malformed URL slipped into the frontier (e.g. from a bad extracted link) - drop it rather than let it crash a worker while holding state.lock.
+                continue
+            if now >= self.domain_next_time.get(domain, 0.0):
+                # Reserve this domain's next slot immediately, so a second worker can't grab another URL for the same domain before this fetch starts.
+                self.domain_next_time[domain] = now + self.polite_delay
+                self.in_flight += 1
+                self.in_flight_urls.add(url)
+                self.attempted += 1
+                claimed_url = url
+                break
+
+            skipped.append(url)
+
+        for url in reversed(skipped):
+            queue.appendleft(url)
+            queue_set.add(url)
+
+        return claimed_url
+
+    def claim_next_url(self) -> tuple[str | None, str]:
+        """Try to claim the next URL that is both in a frontier and not on its domain's cooldown. frontier_high (Tuebingen-related discoveries) is always scanned before frontier_low.
         Returns (url, "ok") if a URL was claimed (this also marks it in-flight and reserves its domains cooldown slot), (None, "wait") if nothing is ready yet
-        but there's still work outstanding, or (None, "done") if the crawl should stop (max_pages reached, or the frontier is empty with no other worker in-flight
-        that could still add to it).
+        but there's still work outstanding, or (None, "done") if the crawl should stop (max_pages reached, or both frontiers are empty with no other worker
+        in-flight that could still add to them).
         """
         with self.lock:
             if self.stop_event.is_set() or len(self.pages) >= self.max_pages:
@@ -164,41 +205,14 @@ class CrawlerState:
                 return None, "done"
 
             now = time.time()
-            # Drain the deque, collecting URLs whose domain is still on cooldown into a temporary list. Once we either claim a URL or
-            # exhaust the queue, push everything we set aside back onto the front of the deque, in the same order it was in originally.
-            skipped: list[str] = []
-            claimed_url: str | None = None
-            while self.frontier:
-                url = self.frontier.popleft()
-                self.frontier_set.discard(url)
-
-                if url in self.visited_urls or not is_probably_html_url(url):
-                    continue
-
-                try:
-                    domain = get_domain(url)
-                except Exception:
-                    # Malformed URL slipped into the frontier (e.g. from a bad extracted link) - drop it rather than let it crash a worker while holding state.lock.
-                    continue
-                if now >= self.domain_next_time.get(domain, 0.0):
-                    # Reserve this domain's next slot immediately, so a second worker can't grab another URL for the same domain before this fetch starts.
-                    self.domain_next_time[domain] = now + self.polite_delay
-                    self.in_flight += 1
-                    self.in_flight_urls.add(url)
-                    self.attempted += 1
-                    claimed_url = url
-                    break
-
-                skipped.append(url)
-
-            for url in reversed(skipped):
-                self.frontier.appendleft(url)
-                self.frontier_set.add(url)
+            claimed_url = self._claim_from_queue(self.frontier_high, self.frontier_high_set, now)
+            if claimed_url is None:
+                claimed_url = self._claim_from_queue(self.frontier_low, self.frontier_low_set, now)
 
             if claimed_url is not None:
                 return claimed_url, "ok"
 
-            if not self.frontier and self.in_flight == 0:
+            if not self.frontier_high and not self.frontier_low and self.in_flight == 0:
                 self.stop_event.set()
                 return None, "done"
             return None, "wait"
@@ -212,16 +226,23 @@ class CrawlerState:
             if candidate > self.domain_next_time.get(domain, 0.0):
                 self.domain_next_time[domain] = candidate
 
-    def add_links(self, links: list[str]) -> None:
+    def add_links(self, links: list[str], is_related: bool) -> None:
+        """Queue newly discovered links. If the page they were found on is Tuebingen-related they go into frontier_high; otherwise frontier_low."""
         with self.lock:
+            target_queue, target_set = (
+                (self.frontier_high, self.frontier_high_set)
+                if is_related
+                else (self.frontier_low, self.frontier_low_set)
+            )
             for link in links:
                 if (
                     link not in self.visited_urls
-                    and link not in self.frontier_set
+                    and link not in self.frontier_high_set
+                    and link not in self.frontier_low_set
                     and link not in self.in_flight_urls
                 ):
-                    self.frontier.append(link)
-                    self.frontier_set.add(link)
+                    target_queue.append(link)
+                    target_set.add(link)
 
     def record_visited(self, url: str, status_code: Any) -> None:
         with self.lock:
@@ -246,7 +267,7 @@ class CrawlerState:
         with self.lock:
             canonical_key = _url_key(canonical_url)
             if canonical_key in self.known_page_keys:
-                return "duplicate", -1, len(self.pages), False
+                return "(any common spelling variant), duplicate", -1, len(self.pages), False
             page["doc_id"] = self.next_doc_id
             self.pages.append(page)
             self.known_page_keys.add(canonical_key)
@@ -296,10 +317,10 @@ class CrawlerState:
                 return True
             return False
 
-    def snapshot_for_checkpoint(self) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    def snapshot_for_checkpoint(self) -> tuple[list[dict[str, Any]], list[str], list[str], list[dict[str, Any]]]:
         """Take a consistent, lock-protected copy of everything that gets written to disk."""
         with self.lock:
-            return list(self.pages), list(self.frontier), list(self.visited_entries)
+            return list(self.pages), list(self.frontier_high), list(self.frontier_low), list(self.visited_entries)
 
 
 def _save_state(
@@ -307,10 +328,14 @@ def _save_state(
     frontier_path: Path,
     visited_path: Path,
     pages: list[dict[str, Any]],
-    frontier: list[str],
+    frontier_high: list[str],
+    frontier_low: list[str],
     visited_entries: list[dict[str, Any]],
 ) -> None:
     """Persist the current crawler state (pages/frontier/visited) to disk.
+
+    Both frontier queues are written into a single frontier.json file, as
+    {"frontier_high": [...], "frontier_low": [...]}.
 
     Called periodically during the crawl (not just at the end) so that an
     interrupted run - Ctrl-C, a crash, a killed process - can be resumed later
@@ -318,7 +343,7 @@ def _save_state(
     last full run.
     """
     write_json(raw_pages_path, {"pages": pages})
-    write_json(frontier_path, frontier)
+    write_json(frontier_path, {"frontier_high": frontier_high, "frontier_low": frontier_low})
     write_json(visited_path, {"visited": visited_entries})
 
 
@@ -358,8 +383,8 @@ def _process_url(state: CrawlerState, session: requests.Session, worker_id: int,
         language = _detect_language(body, html_lang)
         is_related = _is_tuebingen_related(canonical_url, title, body)
 
-        # Queue newly discovered links for later, regardless of whether this page is saved
-        state.add_links(outgoing_links)
+        # Queue newly discovered links for later, regardless of whether this page is saved.
+        state.add_links(outgoing_links, is_related)
 
         if not is_related or not _looks_english(canonical_url, language, body):
             reason = "skipped: not tuebingen-related or not english"
@@ -432,9 +457,20 @@ def _worker_loop(state: CrawlerState, worker_id: int, timeout: float, checkpoint
         try:
             if state.should_checkpoint():
                 raw_pages_path, frontier_path, visited_path = checkpoint_paths
-                pages, frontier, visited_entries = state.snapshot_for_checkpoint()
-                _save_state(raw_pages_path, frontier_path, visited_path, pages, frontier, visited_entries)
-                print(f"checkpoint saved (attempted={state.attempted}, saved={state.saved}, frontier={len(frontier)})")
+                pages, frontier_high, frontier_low, visited_entries = state.snapshot_for_checkpoint()
+                _save_state(
+                    raw_pages_path,
+                    frontier_path,
+                    visited_path,
+                    pages,
+                    frontier_high,
+                    frontier_low,
+                    visited_entries,
+                )
+                print(
+                    f"checkpoint saved (attempted={state.attempted}, saved={state.saved}, "
+                    f"frontier_high={len(frontier_high)}, frontier_low={len(frontier_low)})"
+                )
         except Exception as exc:
             # Disk-full, permissions, or a stray non-serializable value shouldn't be able to kill a worker thread.
             print(f"worker={worker_id} checkpoint save failed: {type(exc).__name__}: {exc}")
@@ -451,25 +487,31 @@ def crawl(
     checkpoint_every: int = 5,
     workers: int = 4,
 ) -> dict[str, Any]:
-    """Run the crawl: fetch frontier URLs with `workers` concurrent threads, filter/save relevant pages, and persist crawler state."""
+    """Run the crawl: fetch frontier URLs (frontier_high first, then frontier_low) with `workers` concurrent
+    threads, filter/save relevant pages, and persist crawler state."""
     raw_pages_path = Path(raw_pages_path)
     frontier_path = Path(frontier_path)
     visited_path = Path(visited_path)
     start_time = time.time()
 
-    # Load any previously saved pages, and resume the frontier from disk (or from 0)
+    # Load any previously saved pages, and resume both frontiers from disk (or from 0).
+    # Both queues live in one frontier.json: {"frontier_high": [...], "frontier_low": [...]}.
     raw = read_json(raw_pages_path, {"pages": []})
     pages = raw.get("pages", [])
-    frontier = read_json(frontier_path, [])
-    if not frontier:
-        frontier = load_seed_urls(seeds_path)
+    frontier_data = read_json(frontier_path, {"frontier_high": [], "frontier_low": []})
+    frontier_high = frontier_data.get("frontier_high", [])
+    frontier_low = frontier_data.get("frontier_low", [])
+    if not frontier_high and not frontier_low:
+        # Fresh start: seed URLs are presumed Tuebingen-relevant, so they go straight into frontier_high.
+        frontier_high = load_seed_urls(seeds_path)
 
     # Load which URLs were already visited, so we don't refetch them across runs
     visited_data = read_json(visited_path, {"visited": []})
     visited_entries = visited_data.get("visited", [])
 
     state = CrawlerState(
-        frontier=frontier,
+        frontier_high=frontier_high,
+        frontier_low=frontier_low,
         pages=pages,
         visited_entries=visited_entries,
         max_pages=max_pages,
@@ -478,8 +520,8 @@ def crawl(
     )
 
     print(
-        f"starting crawl: {len(frontier)} urls in frontier, {len(pages)} pages already saved, "
-        f"max_pages={max_pages}, workers={workers}"
+        f"starting crawl: {len(frontier_high)} urls in frontier_high, {len(frontier_low)} urls in frontier_low, "
+        f"{len(pages)} pages already saved, max_pages={max_pages}, workers={workers}"
     )
 
     checkpoint_paths = (raw_pages_path, frontier_path, visited_path)
@@ -512,17 +554,26 @@ def crawl(
                 # This worker is stuck past its request timeout
                 print(f"warning: {t.name} did not finish within {join_deadline:.0f}s, abandoning it (it may still be running in the background)")
 
-    pages, frontier, visited_entries = state.snapshot_for_checkpoint()
+    pages, frontier_high, frontier_low, visited_entries = state.snapshot_for_checkpoint()
 
     # Persist crawler state to disk so subsequent runs can resume where this one left off.
-    _save_state(raw_pages_path, frontier_path, visited_path, pages, frontier, visited_entries)
+    _save_state(
+        raw_pages_path,
+        frontier_path,
+        visited_path,
+        pages,
+        frontier_high,
+        frontier_low,
+        visited_entries,
+    )
     elapsed_seconds = time.time() - start_time
     summary = {
         "step": "crawling",
         "saved_pages": state.saved,
         "total_pages": len(pages),
         "attempted_urls": state.attempted,
-        "frontier_size": len(frontier),
+        "frontier_high_size": len(frontier_high),
+        "frontier_low_size": len(frontier_low),
         "visited_size": len(visited_entries),
         "timeout": timeout,
         "polite_delay": polite_delay,
@@ -535,6 +586,7 @@ def crawl(
     status = "interrupted" if state.interrupted else "done"
     print(
         f"{status}: saved={state.saved} attempted={state.attempted} "
-        f"frontier_remaining={len(frontier)} elapsed={summary['elapsed_human']}"
+        f"frontier_high_remaining={len(frontier_high)} frontier_low_remaining={len(frontier_low)} "
+        f"elapsed={summary['elapsed_human']}"
     )
     return summary
