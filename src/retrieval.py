@@ -2,18 +2,12 @@ import json
 import math
 from collections import defaultdict
 
-#TODO einkomentieren nachdem src.preprocessing implementiert wurde
-#try:
-    #from src.preprocessing import preprocess
-#except ImportError:
-    #def preprocess(text):
+try:
+    from src.preprocessing import preprocess
+except ImportError:
+    def preprocess(text):
         # Einfacher Fallback: Kleinbuchstaben und Whitespace-Split
-        #return text.lower().split()
-
-#TODO dummy entfernen wenn src.preprocessing implementiert wurde
-def preprocess(text):
         return text.lower().split()
-
 
 def compute_idf(N, df):
     """
