@@ -119,12 +119,11 @@ def build_page_context(result: dict, doc: dict, body: str, query: str) -> tuple[
     return context, source
 
 
-def build_prompt(query: str, category: str, context: str) -> str:
+def build_prompt(query: str, context: str) -> str:
     return f"""
 You are writing a short explanation for a local Tuebingen search engine.
 
 User query: {query}
-Detected category: {category}
 
 Use only the provided page text. Do not invent facts.
 Write 2-3 concise sentences in English.
@@ -167,7 +166,6 @@ Provided page text:
 def route_prompt(
     mode: str,
     query: str,
-    category: str,
     context: str,
     custom_instruction: str = "",
 ) -> str:
@@ -175,7 +173,7 @@ def route_prompt(
         return build_summary_only_prompt(context)
     if mode == "custom" and custom_instruction.strip():
         return build_custom_prompt(context, custom_instruction.strip())
-    return build_prompt(query, category, context)
+    return build_prompt(query, context)
 
 
 def call_gemini(prompt: str, api_key: str, model: str) -> str:
@@ -201,7 +199,6 @@ def generate_llm_summary(
     doc: dict,
     body: str,
     query: str,
-    category: str,
     secrets: object | None = None,
     mode: str = "relevance",
     custom_instruction: str = "",
@@ -215,7 +212,7 @@ def generate_llm_summary(
         return LlmSummary("", source, "No page text available.")
 
     try:
-        prompt = route_prompt(mode, query, category, context, custom_instruction)
+        prompt = route_prompt(mode, query, context, custom_instruction)
         summary = call_gemini(prompt, api_key, model)
         if not summary:
             return LlmSummary("", source, "Gemini returned an empty response.")

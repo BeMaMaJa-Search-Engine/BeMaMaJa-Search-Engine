@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import html
 import hashlib
+import html
 import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
 import streamlit as st
 
@@ -15,28 +15,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.preprocessing import preprocess
+from src.reranking import rerank
 from src.retrieval import retrieve
 from src.utils import project_path, read_json
 from llm_summary import generate_llm_summary, gemini_is_configured
-
-
-CATEGORY_RULES = {
-    "Museums": ["museum", "castle", "exhibition", "collection", "collections", "heritage", "unimuseum"],
-    "Attractions": ["attraction", "sightseeing", "visit", "tourism", "old town", "neckar"],
-    "Food and drinks": ["restaurant", "cafe", "bar", "food", "drink", "dining", "menu", "wine"],
-    "University": ["university", "study", "research", "campus", "faculty", "student", "library"],
-    "Transport": ["train", "bus", "parking", "transport", "station"],
-    "Events": ["event", "festival", "concert", "calendar"],
-}
-
-SOURCE_RULES = [
-    ("unimuseum.uni-tuebingen.de", "Museum"),
-    ("uni-tuebingen.de", "University"),
-    ("tuebingen-info.de", "Tourism"),
-    ("tuebingen.de", "Official City"),
-    ("wikipedia.org", "Reference"),
-    ("wikivoyage.org", "Reference"),
-]
 
 SCORE_LABELS = [
     ("BM25", "normalized_bm25"),
@@ -45,6 +27,13 @@ SCORE_LABELS = [
     ("LinkScore", "normalized_link"),
     ("LSA", "normalized_lsa"),
 ]
+
+# TODO(team): Remove entries as soon as the backend returns these score components.
+PENDING_RANKING_SIGNALS = {
+    "normalized_prf": "PRF",
+    "normalized_link": "LinkScore",
+    "normalized_lsa": "LSA",
+}
 
 AI_MODE_OPTIONS = {
     "Summary + relevance": "relevance",
@@ -260,15 +249,19 @@ def load_index(index_mtime: float) -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def cached_retrieve(query: str, top_k: int, index_mtime: float) -> list[dict]:
+def cached_retrieve(query: str, top_k: int, index_mtime: float) -> dict:
     _ = index_mtime
     index = read_json(project_path("data", "index.json"), {})
-    response = retrieve(query, index, top_k=top_k)
-    return normalize_results(response)
+    first_stage = retrieve(query, index, top_k=top_k)
+    reranked = rerank(first_stage, index)
+    return {
+        "results": normalize_results(reranked),
+        "query_tokens": first_stage.get("query_tokens", []),
+    }
 
 
 def normalize_results(response: object) -> list[dict]:
-    """Adapt the team's BM25 output to the UI result-card format."""
+    """Adapt the team's retrieval output to the UI result-card format."""
     if isinstance(response, list):
         candidates = response
     elif isinstance(response, dict):
@@ -284,10 +277,6 @@ def normalize_results(response: object) -> list[dict]:
         score = float(item.get("score", item.get("bm25_score", 0.0)) or 0.0)
         score_details = dict(item.get("score_details", {}))
         score_details.setdefault("normalized_bm25", score / max_score if max_score > 0 else 0.0)
-        score_details.setdefault("normalized_field_boost", 0.0)
-        score_details.setdefault("normalized_prf", 0.0)
-        score_details.setdefault("normalized_link", 0.0)
-        score_details.setdefault("normalized_lsa", 0.0)
 
         result = dict(item)
         result["rank"] = int(item.get("rank", rank) or rank)
@@ -308,11 +297,10 @@ def cached_smart_summary(
     snippet: str,
     body: str,
     prf_terms: tuple[str, ...],
-    category: str,
 ) -> str:
     result = {"doc_id": doc_id, "title": title, "snippet": snippet}
     query_terms = preprocess(query_text, use_stemming=False)
-    return smart_summary(result, {}, body, query_terms, list(prf_terms), category)
+    return smart_summary(result, body, query_terms, list(prf_terms))
 
 
 @st.cache_data(show_spinner=False)
@@ -321,42 +309,12 @@ def raw_body_lookup() -> dict[int, str]:
     return {int(page.get("doc_id", -1)): page.get("body", "") for page in raw_pages.get("pages", [])}
 
 
-def classify_category(result: dict, doc: dict, body: str = "") -> str:
-    title = result.get("title") or doc.get("title", "")
-    url = result.get("url") or doc.get("url", "")
-    snippet = result.get("snippet") or doc.get("snippet", "")
-    strong_text = f"{title} {url}".lower()
-    full_text = f"{strong_text} {snippet} {body[:1000]}".lower()
-
-    for category in ["Food and drinks", "Museums", "Events", "Transport"]:
-        if any(term in strong_text for term in CATEGORY_RULES[category]):
-            return category
-
-    best_category = "General"
-    best_score = 0
-    for category, terms in CATEGORY_RULES.items():
-        score = sum(3 for term in terms if term in strong_text)
-        score += sum(1 for term in terms if term in full_text)
-        if score > best_score:
-            best_category = category
-            best_score = score
-    return best_category
-
-
-def source_badge(url: str) -> str:
-    host = urlparse(url or "").netloc.lower()
-    for needle, label in SOURCE_RULES:
-        if needle in host:
-            return label
-    return "External"
-
-
 def split_sentences(text: str) -> list[str]:
     text = " ".join((text or "").split())
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if 35 <= len(s.strip()) <= 340]
 
 
-def smart_summary(result: dict, doc: dict, body: str, query_terms: list[str], prf_terms: list[str], category: str) -> str:
+def smart_summary(result: dict, body: str, query_terms: list[str], prf_terms: list[str]) -> str:
     body_text = (body or "")[:12000]
     sentences = split_sentences(body_text) or split_sentences(result.get("snippet", ""))
     if not sentences:
@@ -365,7 +323,6 @@ def smart_summary(result: dict, doc: dict, body: str, query_terms: list[str], pr
     query_set = set(query_terms)
     prf_set = set(prf_terms)
     title_set = set(preprocess(result.get("title", ""), use_stemming=False))
-    category_set = set(preprocess(category, use_stemming=False))
 
     scored = []
     for pos, sentence in enumerate(sentences[:80]):
@@ -373,7 +330,6 @@ def smart_summary(result: dict, doc: dict, body: str, query_terms: list[str], pr
         score = 3 * len(terms & query_set)
         score += 1.5 * len(terms & prf_set)
         score += 1.0 * len(terms & title_set)
-        score += 0.8 * len(terms & category_set)
         if score:
             scored.append((score, -pos, sentence))
 
@@ -432,7 +388,9 @@ def why_reasons(result: dict, doc: dict, query_tokens: list[str], prf_terms: lis
         reasons.append("Matched query term in URL")
     if body_hits or result.get("matched_terms"):
         terms = sorted(body_hits or set(result.get("matched_terms", [])))
-        reasons.append("Matched terms in body: " + ", ".join(terms[:6]))
+        reasons.append("Matched indexed terms: " + ", ".join(terms[:6]))
+    if score_details.get("normalized_field_boost", 0) > 0:
+        reasons.append("Title or heading Field Boost contributed")
     if prf_terms and score_details.get("normalized_prf", 0) > 0:
         reasons.append("Boosted by PRF terms: " + ", ".join(prf_terms[:5]))
     if score_details.get("normalized_link", 0) > 0:
@@ -448,12 +406,23 @@ def score_value(score_details: dict, key: str) -> float:
 
 
 def show_score_bars(score_details: dict) -> None:
+    shown_components = 0
     for label, key in SCORE_LABELS:
+        if key not in score_details:
+            continue
         value = score_value(score_details, key)
         cols = st.columns([1.1, 4, 0.7])
         cols[0].caption(label)
         cols[1].progress(value)
         cols[2].caption(f"{value:.2f}")
+        shown_components += 1
+
+    if not shown_components:
+        st.caption("No ranking component details were returned by the backend.")
+
+    pending = [label for key, label in PENDING_RANKING_SIGNALS.items() if key not in score_details]
+    if pending:
+        st.caption("Pending backend signals: " + ", ".join(pending))
 
 
 def format_runtime(seconds: float) -> str:
@@ -490,7 +459,6 @@ def render_card(
     custom_instruction: str,
 ) -> None:
     prf_terms = result.get("expansion_terms", [])
-    category = classify_category(result, doc, body)
     found_terms, not_found_terms = direct_query_term_matches(result, doc, body, query_terms)
     terms_to_mark = query_terms + prf_terms + result.get("matched_terms", [])
     summary_key = f"summary_{int(result.get('doc_id', -1))}_{int(result.get('rank', 0))}"
@@ -557,7 +525,6 @@ def render_card(
                             doc=doc,
                             body=body,
                             query=query_text,
-                            category=category,
                             secrets=st.secrets,
                             mode=ai_mode,
                             custom_instruction=custom_instruction,
@@ -581,7 +548,6 @@ def render_card(
                     result.get("snippet", ""),
                     body,
                     tuple(prf_terms),
-                    category,
                 )
                 summary_label = "Local Smart Summary"
 
@@ -633,13 +599,8 @@ def main() -> None:
     docs = doc_lookup(index)
     bodies = raw_body_lookup()
 
-    categories = ["All"] + sorted(
-        {classify_category({"title": doc.get("title"), "url": doc.get("url"), "snippet": doc.get("snippet")}, doc) for doc in documents}
-    )
-
     with st.sidebar:
         st.header("Search")
-        selected_category = st.selectbox("Category", categories)
         top_k = st.slider("Results", 5, 50, 10)
         with st.expander("AI Settings"):
             ai_mode_label = st.selectbox("AI response", list(AI_MODE_OPTIONS))
@@ -663,20 +624,20 @@ def main() -> None:
         return
 
     start = time.perf_counter()
-    results = cached_retrieve(query, top_k, index_mtime)
+    retrieval_output = cached_retrieve(query, top_k, index_mtime)
     runtime = time.perf_counter() - start
 
+    results = retrieval_output.get("results", [])
     query_terms = preprocess(query, use_stemming=False)
     query_tokens = preprocess(query)
+    corrected_query_tokens = retrieval_output.get("query_tokens", query_tokens)
     prf_terms = results[0].get("expansion_terms", []) if results else []
 
-    filtered = []
+    prepared_results = []
     for result in results:
         doc = docs.get(int(result.get("doc_id", -1)), {})
         body = bodies.get(int(result.get("doc_id", -1)), "")
-        category = classify_category(result, doc, body)
-        if selected_category == "All" or category == selected_category:
-            filtered.append((result, doc, body))
+        prepared_results.append((result, doc, body))
 
     with st.sidebar:
         st.divider()
@@ -684,20 +645,28 @@ def main() -> None:
         st.caption("Gemini AI summary")
         st.write("Configured" if gemini_is_configured(st.secrets) else "Not configured")
         st.caption(f"AI mode: {ai_mode_label}")
-        st.caption("PRF expansion terms")
-        st.write(", ".join(prf_terms) if prf_terms else "None")
+        st.caption("Active ranking")
+        st.write("BM25 + Field Boost")
+        if corrected_query_tokens != query_tokens:
+            st.caption("Corrected search tokens")
+            st.write(" ".join(corrected_query_tokens))
+        if prf_terms:
+            st.caption("PRF expansion terms")
+            st.write(", ".join(prf_terms))
+        else:
+            st.caption("Future backend signals")
+            st.write("PRF, LinkScore, and LSA are pending.")
         st.caption(f"Indexed pages: {len(documents)}")
         st.caption(f"Search time: {format_runtime(runtime)}")
-        st.caption(f"Shown results: {len(filtered)}")
-        st.caption(f"Active filter: {selected_category}")
+        st.caption(f"Shown results: {len(prepared_results)}")
 
-    metric_cards(runtime, len(documents), len(filtered))
+    metric_cards(runtime, len(documents), len(prepared_results))
 
-    if not filtered:
-        st.warning("No results found for this query/filter.")
+    if not prepared_results:
+        st.warning("No results found for this query.")
         return
 
-    for result, doc, body in filtered:
+    for result, doc, body in prepared_results:
         render_card(
             result,
             doc,
