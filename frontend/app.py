@@ -30,13 +30,6 @@ SCORE_LABELS = [
     ("LSA", "normalized_lsa"),
 ]
 
-# TODO(team): Remove entries as soon as the backend returns these score components.
-PENDING_RANKING_SIGNALS = {
-    "normalized_prf": "PRF",
-    "normalized_link": "LinkScore",
-    "normalized_lsa": "LSA",
-}
-
 AI_MODE_OPTIONS = {
     "Summary + relevance": "relevance",
     "Summary only": "summary",
@@ -203,6 +196,23 @@ def add_css() -> None:
             color: #e5e7eb;
             background: #1e293b;
         }
+        .badge-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: nowrap;
+            gap: .28rem;
+        }
+        .badge-row .badge {
+            margin: .25rem 0 .15rem 0;
+            padding-left: .4rem;
+            padding-right: .4rem;
+            white-space: nowrap;
+        }
+        @media (max-width: 700px) {
+            .badge-row {
+                flex-wrap: wrap;
+            }
+        }
         .score-badge {
             background: #064e3b;
             border-color: #10b981;
@@ -238,6 +248,45 @@ def add_css() -> None:
             background: #020617;
             border-right: 1px solid #1e293b;
         }
+        .sidebar-section {
+            border-top: 1px solid #1e293b;
+            margin-top: .9rem;
+            padding-top: .85rem;
+        }
+        .sidebar-section-title {
+            color: #cbd5e1;
+            font-size: .72rem;
+            font-weight: 800;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            margin-bottom: .55rem;
+        }
+        .sidebar-item {
+            margin-bottom: .65rem;
+        }
+        .sidebar-label {
+            color: #94a3b8;
+            font-size: .72rem;
+        }
+        .sidebar-value {
+            color: #f8fafc;
+            font-size: .84rem;
+            font-weight: 650;
+            margin-top: .08rem;
+            overflow-wrap: anywhere;
+        }
+        .sidebar-status-ready {
+            color: #d1fae5;
+        }
+        .sidebar-status-missing {
+            color: #fda4af;
+        }
+        .sidebar-note {
+            color: #94a3b8;
+            font-size: .7rem;
+            line-height: 1.4;
+            margin-top: .18rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -268,12 +317,14 @@ def load_index(index_mtime: float) -> tuple[dict, str, str]:
 
 @st.cache_data(show_spinner=False)
 def cached_retrieve(query: str, top_k: int, index_mtime: float) -> dict:
+    start = time.perf_counter()
     index = load_index(index_mtime)[0]
     first_stage = retrieve(query, index, top_k=top_k)
     reranked = rerank(first_stage, index)
     return {
         "results": normalize_results(reranked),
         "query_tokens": first_stage.get("query_tokens", []),
+        "runtime": time.perf_counter() - start,
     }
 
 
@@ -286,14 +337,10 @@ def normalize_results(response: object) -> list[dict]:
     else:
         candidates = []
 
-    raw_scores = [float(item.get("score", item.get("bm25_score", 0.0)) or 0.0) for item in candidates]
-    max_score = max(raw_scores, default=0.0)
-
     results: list[dict] = []
     for rank, item in enumerate(candidates, start=1):
         score = float(item.get("score", item.get("bm25_score", 0.0)) or 0.0)
         score_details = dict(item.get("score_details", {}))
-        score_details.setdefault("normalized_bm25", score / max_score if max_score > 0 else 0.0)
 
         result = dict(item)
         result["rank"] = int(item.get("rank", rank) or rank)
@@ -323,11 +370,13 @@ def cached_smart_summary(
 @st.cache_resource(show_spinner=False)
 def raw_body_lookup(raw_pages_mtime: float) -> tuple[dict[int, str], str, str]:
     _ = raw_pages_mtime
+    local_path = project_path("data", "raw_pages.json")
+    storage_secrets = {} if local_path.exists() else st.secrets
     try:
         raw_pages, source, warning = load_json_source(
-            project_path("data", "raw_pages.json"),
+            local_path,
             RAW_PAGES_OBJECT,
-            st.secrets,
+            storage_secrets,
         )
     except StorageDataError as exc:
         return {}, "unavailable", str(exc)
@@ -460,11 +509,6 @@ def show_score_bars(score_details: dict) -> None:
     if not shown_components:
         st.caption("No ranking component details were returned by the backend.")
 
-    pending = [label for key, label in PENDING_RANKING_SIGNALS.items() if key not in score_details]
-    if pending:
-        st.caption("Pending backend signals: " + ", ".join(pending))
-
-
 def format_runtime(seconds: float) -> str:
     if seconds <= 0:
         return "<0.001s"
@@ -516,7 +560,8 @@ def render_card(
         else ""
     )
     terms_to_mark = query_terms + prf_terms + result.get("matched_terms", [])
-    summary_key = f"summary_{int(result.get('doc_id', -1))}_{int(result.get('rank', 0))}"
+    query_hash = hashlib.sha1(query_text.encode("utf-8")).hexdigest()[:10]
+    summary_key = f"summary_{int(result.get('doc_id', -1))}_{query_hash}"
     active_settings_key = f"active_{summary_key}"
     settings_hash = hashlib.sha1(f"{ai_mode}:{custom_instruction}".encode("utf-8")).hexdigest()[:10]
     requested_llm_key = f"llm_{summary_key}_{settings_hash}"
@@ -555,10 +600,11 @@ def render_card(
                     {esc(result.get("title") or result.get("url"))}
                   </div>
                   <a class="result-url" href="{esc(result.get("url", ""))}" target="_blank">{esc(result.get("url", ""))}</a><br>
-                  <span class="badge term-found">Found: {esc(", ".join(found_terms) or "none")}</span>
-                  <span class="badge term-missing">Not found: {esc(", ".join(not_found_terms) or "none")}</span>
-                  {correction_badge}
-                  <span class="badge score-badge">Score {float(result.get("score", 0.0) or 0.0):.3f}</span>
+                  <div class="badge-row">
+                    <span class="badge term-found">Found: {esc(", ".join(found_terms) or "none")}</span>
+                    <span class="badge term-missing">Not found: {esc(", ".join(not_found_terms) or "none")}</span>
+                    {correction_badge}<span class="badge score-badge">Score {float(result.get("score", 0.0) or 0.0):.3f}</span>
+                  </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -699,9 +745,8 @@ def main() -> None:
         st.info("Enter a query to search the local JSON index.")
         return
 
-    start = time.perf_counter()
     retrieval_output = cached_retrieve(query, top_k, index_mtime)
-    runtime = time.perf_counter() - start
+    runtime = float(retrieval_output.get("runtime", 0.0))
 
     results = retrieval_output.get("results", [])
     query_terms = preprocess(query, use_stemming=False)
@@ -710,31 +755,83 @@ def main() -> None:
     corrections = spelling_corrections(query_terms, query_tokens, corrected_query_tokens)
     prf_terms = results[0].get("expansion_terms", []) if results else []
 
+    raw_bodies, _raw_source, raw_warning = raw_body_lookup(raw_pages_mtime)
+    if raw_warning:
+        st.warning(f"{raw_warning} Found-term badges are using title, URL, and snippet only.")
+
     prepared_results = []
     for result in results:
         doc = docs.get(int(result.get("doc_id", -1)), {})
-        prepared_results.append((result, doc, ""))
+        body = raw_bodies.get(int(result.get("doc_id", -1)), "")
+        prepared_results.append((result, doc, body))
 
     with st.sidebar:
-        st.divider()
-        st.caption(f"Original query: {query}")
-        st.caption("Gemini AI summary")
-        st.write("Configured" if gemini_is_configured(st.secrets) else "Not configured")
-        st.caption(f"AI mode: {ai_mode_label}")
-        st.caption("Active ranking")
-        st.write("BM25 + Field Boost")
+        gemini_ready = gemini_is_configured(st.secrets)
+        gemini_status = "Ready" if gemini_ready else "Not configured"
+        gemini_status_class = "sidebar-status-ready" if gemini_ready else "sidebar-status-missing"
+        active_score_keys = {
+            key
+            for result in results
+            for key in result.get("score_details", {})
+        }
+        active_ranking_labels = [
+            label for label, key in SCORE_LABELS if key in active_score_keys
+        ]
+        active_ranking_text = " + ".join(active_ranking_labels) or "No ranking details"
+        correction_item = ""
         if corrections:
-            st.caption("Spelling correction applied")
-            st.write(", ".join(f"{original} -> {corrected}" for original, corrected in corrections))
-        if prf_terms:
-            st.caption("PRF expansion terms")
-            st.write(", ".join(prf_terms))
-        else:
-            st.caption("Future backend signals")
-            st.write("PRF, LinkScore, and LSA are pending.")
-        st.caption(f"Indexed pages: {len(documents)}")
-        st.caption(f"Search time: {format_runtime(runtime)}")
-        st.caption(f"Shown results: {len(prepared_results)}")
+            correction_text = ", ".join(
+                f"{original} -> {corrected}" for original, corrected in corrections
+            )
+            correction_item = f"""
+              <div class="sidebar-item">
+                <div class="sidebar-label">Spelling correction</div>
+                <div class="sidebar-value">{esc(correction_text)}</div>
+              </div>
+            """
+        st.markdown(
+            f"""
+            <div class="sidebar-section">
+              <div class="sidebar-section-title">Search overview</div>
+              <div class="sidebar-item">
+                <div class="sidebar-label">Original query</div>
+                <div class="sidebar-value">{esc(query)}</div>
+              </div>
+              <div class="sidebar-item">
+                <div class="sidebar-label">Indexed pages</div>
+                <div class="sidebar-value">{len(documents)}</div>
+              </div>
+              <div class="sidebar-item">
+                <div class="sidebar-label">Search time</div>
+                <div class="sidebar-value">{esc(format_runtime(runtime))}</div>
+              </div>
+              <div class="sidebar-item">
+                <div class="sidebar-label">Shown results</div>
+                <div class="sidebar-value">{len(prepared_results)}</div>
+              </div>
+            </div>
+            <div class="sidebar-section">
+              <div class="sidebar-section-title">AI configuration</div>
+              <div class="sidebar-item">
+                <div class="sidebar-label">Gemini summary</div>
+                <div class="sidebar-value {gemini_status_class}">{esc(gemini_status)}</div>
+              </div>
+              <div class="sidebar-item">
+                <div class="sidebar-label">Response mode</div>
+                <div class="sidebar-value">{esc(ai_mode_label)}</div>
+              </div>
+            </div>
+            <div class="sidebar-section">
+              <div class="sidebar-section-title">Ranking</div>
+              <div class="sidebar-item">
+                <div class="sidebar-label">Active ranking</div>
+                <div class="sidebar-value">{esc(active_ranking_text)}</div>
+              </div>
+              {correction_item}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     metric_cards(runtime, len(documents), len(prepared_results), index_source)
 
