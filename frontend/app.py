@@ -19,6 +19,7 @@ from src.reranking import rerank
 from src.retrieval import retrieve
 from src.utils import project_path, read_json
 from llm_summary import generate_llm_summary, gemini_is_configured
+from loading_animation import water_cooling_loader
 
 SCORE_LABELS = [
     ("BM25", "normalized_bm25"),
@@ -208,6 +209,11 @@ def add_css() -> None:
             border-color: #fb7185;
             color: #ffe4e6;
         }
+        .term-corrected {
+            background: #172554;
+            border-color: #60a5fa;
+            color: #dbeafe;
+        }
         .rank-badge {
             background: #1d4ed8;
             border-color: #60a5fa;
@@ -370,6 +376,20 @@ def direct_query_term_matches(
     return found, not_found
 
 
+def spelling_corrections(
+    query_terms: list[str],
+    query_tokens: list[str],
+    corrected_query_tokens: list[str],
+) -> list[tuple[str, str]]:
+    corrections = []
+    for index, (original_token, corrected_token) in enumerate(zip(query_tokens, corrected_query_tokens)):
+        if original_token == corrected_token:
+            continue
+        entered_term = query_terms[index] if index < len(query_terms) else original_token
+        corrections.append((entered_term, corrected_token))
+    return corrections
+
+
 def why_reasons(result: dict, doc: dict, query_tokens: list[str], prf_terms: list[str]) -> list[str]:
     query_set = set(query_tokens)
     score_details = result.get("score_details", {})
@@ -455,11 +475,19 @@ def render_card(
     query_text: str,
     query_terms: list[str],
     query_tokens: list[str],
+    corrected_query_tokens: list[str],
     ai_mode: str,
     custom_instruction: str,
 ) -> None:
     prf_terms = result.get("expansion_terms", [])
     found_terms, not_found_terms = direct_query_term_matches(result, doc, body, query_terms)
+    corrections = spelling_corrections(query_terms, query_tokens, corrected_query_tokens)
+    correction_text = ", ".join(f"{original} -> {corrected}" for original, corrected in corrections)
+    correction_badge = (
+        f'<span class="badge term-corrected">Corrected search: {esc(correction_text)}</span>'
+        if correction_text
+        else ""
+    )
     terms_to_mark = query_terms + prf_terms + result.get("matched_terms", [])
     summary_key = f"summary_{int(result.get('doc_id', -1))}_{int(result.get('rank', 0))}"
     active_settings_key = f"active_{summary_key}"
@@ -501,6 +529,7 @@ def render_card(
                   <a class="result-url" href="{esc(result.get("url", ""))}" target="_blank">{esc(result.get("url", ""))}</a><br>
                   <span class="badge term-found">Found: {esc(", ".join(found_terms) or "none")}</span>
                   <span class="badge term-missing">Not found: {esc(", ".join(not_found_terms) or "none")}</span>
+                  {correction_badge}
                   <span class="badge score-badge">Score {float(result.get("score", 0.0) or 0.0):.3f}</span>
                 </div>
                 """,
@@ -515,11 +544,12 @@ def render_card(
                 disabled=needs_summary and custom_instruction_missing,
                 use_container_width=True,
             )
+            cooling_placeholder = st.empty()
 
         if summary_clicked:
             if needs_summary:
                 if requested_llm_key not in st.session_state:
-                    with st.spinner("Generating AI summary..."):
+                    with water_cooling_loader(cooling_placeholder):
                         st.session_state[requested_llm_key] = generate_llm_summary(
                             result=result,
                             doc=doc,
@@ -534,6 +564,7 @@ def render_card(
                 active_settings_hash = settings_hash
             else:
                 st.session_state[summary_key] = not st.session_state[summary_key]
+            st.rerun()
 
         if st.session_state[summary_key] and active_settings_hash:
             active_llm_key = f"llm_{summary_key}_{active_settings_hash}"
@@ -571,7 +602,7 @@ def render_card(
 
         with st.expander("Why this result? Score details and ranking signals"):
             st.write("Why this result?")
-            for reason in why_reasons(result, doc, query_tokens, prf_terms):
+            for reason in why_reasons(result, doc, corrected_query_tokens, prf_terms):
                 st.markdown(f"- {reason}")
             st.write("Score breakdown")
             show_score_bars(result.get("score_details", {}))
@@ -631,6 +662,7 @@ def main() -> None:
     query_terms = preprocess(query, use_stemming=False)
     query_tokens = preprocess(query)
     corrected_query_tokens = retrieval_output.get("query_tokens", query_tokens)
+    corrections = spelling_corrections(query_terms, query_tokens, corrected_query_tokens)
     prf_terms = results[0].get("expansion_terms", []) if results else []
 
     prepared_results = []
@@ -647,9 +679,9 @@ def main() -> None:
         st.caption(f"AI mode: {ai_mode_label}")
         st.caption("Active ranking")
         st.write("BM25 + Field Boost")
-        if corrected_query_tokens != query_tokens:
-            st.caption("Corrected search tokens")
-            st.write(" ".join(corrected_query_tokens))
+        if corrections:
+            st.caption("Spelling correction applied")
+            st.write(", ".join(f"{original} -> {corrected}" for original, corrected in corrections))
         if prf_terms:
             st.caption("PRF expansion terms")
             st.write(", ".join(prf_terms))
@@ -674,6 +706,7 @@ def main() -> None:
             query,
             query_terms,
             query_tokens,
+            corrected_query_tokens,
             ai_mode,
             custom_instruction,
         )

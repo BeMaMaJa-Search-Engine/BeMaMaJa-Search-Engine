@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 PLACEHOLDER_KEY = "paste_your_gemini_api_key_here"
 MAX_CONTEXT_CHARS = 24000
+MAX_OUTPUT_TOKENS = 256
 
 
 @dataclass
@@ -183,7 +184,7 @@ def call_gemini(prompt: str, api_key: str, model: str) -> str:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 140,
+            "maxOutputTokens": MAX_OUTPUT_TOKENS,
         },
     }
     response = requests.post(url, headers=headers, json=payload, timeout=20)
