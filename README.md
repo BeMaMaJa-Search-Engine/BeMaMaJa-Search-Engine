@@ -4,7 +4,7 @@ Initial project structure for a student-style search engine project in the cours
 
 The project will crawl English web pages related to Tuebingen, store them locally, build an index, retrieve ranked results for queries, export batch results, and provide a small Streamlit interface.
 
-At this initial stage, the files are placeholders. Data exchange is planned as JSON first, so there are no `.pkl` or `.tsv` files in this initial commit.
+At this initial stage, the files are placeholders. Most internal pipeline files are JSON, while the official batch query and result files use the tab-separated text format required by the project instructions.
 
 ## Project Structure
 
@@ -13,7 +13,7 @@ mse-tuebingen-search/
 |-- README.md
 |-- requirements.txt
 |-- seeds.json
-|-- queries.json
+|-- queries.tsv
 |-- data/
 |   |-- raw_pages.json
 |   |-- index.json
@@ -22,7 +22,7 @@ mse-tuebingen-search/
 |   |-- crawl_summary.json
 |   |-- preprocessed_pages.json
 |   |-- index_summary.json
-|   |-- results.json
+|   |-- results.tsv
 |   `-- batch_summary.json
 |-- src/
 |   |-- crawler.py
@@ -46,7 +46,7 @@ mse-tuebingen-search/
 ## File Responsibilities
 
 - `seeds.json`: start URLs for the crawler.
-- `queries.json`: batch queries.
+- `queries.tsv`: official batch queries, one query per line as `query_id<TAB>query text`.
 - `data/raw_pages.json`: locally stored crawled pages.
 - `data/frontier.json`: simple JSON list of URLs still waiting to be crawled.
 - `data/visited.json`: URLs already visited.
@@ -54,7 +54,7 @@ mse-tuebingen-search/
 - `data/crawl_summary.json`: crawl statistics.
 - `data/preprocessed_pages.json`: tokenized document fields after preprocessing.
 - `data/index_summary.json`: index statistics.
-- `data/results.json`: batch retrieval results.
+- `data/results.tsv`: official batch retrieval results, one ranked result per line as `query_id<TAB>rank<TAB>url<TAB>score`.
 - `data/batch_summary.json`: compact batch retrieval summary.
 - `src/crawler.py`: crawling, URL filtering, page extraction.
 - `src/preprocessing.py`: tokenization, normalization, stopword removal, and NLTK Porter stemming.
@@ -278,7 +278,7 @@ Example JSON for `data/index_summary.json`:
 
 ### 5. Retrieval / BM25
 
-- Input: query from `queries.json` or the UI, plus `data/index.json`
+- Input: query from `queries.tsv` or the UI, plus `data/index.json`
 - Processing: preprocess query with the same `preprocess(...)` function used for documents, score documents with manually implemented BM25, retrieve top candidates and attach document metadata such as title, URL, and snippet
 - Output: first-stage ranked result list
 - Files: `src/retrieval.py`, `src/preprocessing.py`
@@ -339,56 +339,30 @@ Example JSON:
 
 ### 7. Batch Output
 
-- Input: `queries.json`, `data/index.json`
+- Input: `queries.tsv`, `data/index.json`
 - Processing: run retrieval for each query and keep up to 100 results
-- Output: `data/results.json`, `data/batch_summary.json`
+- Output: `data/results.tsv`, `data/batch_summary.json`
 - Files: `src/batch.py`, `scripts/run_batch.py`
 
-Example JSON for `queries.json`:
+Example TSV for `queries.tsv`:
 
-```json
-{
-  "queries": [
-    {
-      "query_id": "1",
-      "text": "tuebingen attractions"
-    }
-  ]
-}
+```text
+1	tübingen attractions
+2	food and drinks
 ```
 
-Example JSON for `data/results.json`:
+Example TSV for `data/results.tsv`:
 
-```json
-{
-  "queries": [
-    {
-      "query_id": "1",
-      "query": "tuebingen attractions",
-      "num_results": 1,
-      "runtime_seconds": 0.05,
-      "results": [
-        {
-          "rank": 1,
-          "url": "https://uni-tuebingen.de/en/",
-          "title": "Home | University of Tuebingen",
-          "snippet": "Example snippet...",
-          "score": 0.84,
-          "score_details": {
-            "bm25_component": 0.7,
-            "field_component": 0.1,
-            "prf_component": 0.02,
-            "link_component": 0.01,
-            "lsa_component": 0.01
-          }
-        }
-      ]
-    }
-  ]
-}
+```text
+1	1	https://www.tuebingen.de/en/3521.html	0.725
+1	2	https://www.komoot.com/guide/355570/castles-in-tuebingen-district	0.671
+1	3	https://www.unimuseum.uni-tuebingen.de/en/museum-at-hohentuebingen-castle	0.529
+1	100	https://www.tuebingen.de/en/3536.html	0.178
+2	1	https://www.tuebingen.de/en/3773.html	0.956
+2	2	https://www.tuebingen.de/en/4456.html	0.797
 ```
 
-Example JSON for `data/batch_summary.json`:
+Optional internal JSON summary for `data/batch_summary.json`:
 
 ```json
 {
