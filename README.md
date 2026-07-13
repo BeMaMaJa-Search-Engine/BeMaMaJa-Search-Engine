@@ -218,9 +218,9 @@ Example JSON:
 ### 4. Indexing
 
 - Input: preprocessed document tokens
-- Processing: build manual inverted index with term frequencies, document lengths, metadata, and link graph
+- Processing: build manual inverted index with term frequencies, document lengths, document metadata, title and heading tokens for re-ranking, field lengths, and link graph
 - Output: `data/index.json`, `data/index_summary.json`
-- Files: `src/indexer.py`, `src/text_representations.py`, `scripts/build_index.py`
+- Files: `src/indexer.py`, `scripts/build_index.py`
 
 Example JSON for `data/index.json`:
 
@@ -230,11 +230,15 @@ Example JSON for `data/index.json`:
     {
       "doc_id": 0,
       "url": "https://uni-tuebingen.de/en/",
+      "fetched_url": "https://uni-tuebingen.de/en/",
       "canonical_url": "https://uni-tuebingen.de/en",
       "title": "Home | University of Tuebingen",
       "snippet": "Example snippet...",
+      "title_tokens": ["home", "univers", "tubingen"],
+      "heading_tokens": ["univers", "tubingen"],
       "doc_length": 320,
-      "outgoing_links": ["https://uni-tuebingen.de/en/study"]
+      "outgoing_links": ["https://uni-tuebingen.de/en/study"],
+      "crawl_time": "2026-07-05T12:00:00Z"
     }
   ],
   "inverted_index": {
@@ -254,6 +258,9 @@ Example JSON for `data/index.json`:
     },
     "title": {
       "0": 3
+    },
+    "heading": {
+      "0": 2
     }
   },
   "average_document_length": 320.0,
@@ -272,7 +279,8 @@ Example JSON for `data/index_summary.json`:
   "vocabulary_size": 1,
   "average_document_length": 320.0,
   "documents_with_outgoing_links": 1,
-  "lsa_available": false
+  "index_file_size_mb": 0.01,
+  "elapsed_seconds": 0.0123
 }
 ```
 

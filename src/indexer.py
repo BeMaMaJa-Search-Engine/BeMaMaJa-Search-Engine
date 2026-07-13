@@ -28,7 +28,7 @@ def load_preprocessed_documents(path: str = "data/preprocessed_pages.json") -> l
 
 
 def build_document_metadata(documents: list[dict]) -> list[dict]:
-    """Create compact document metadata entries for the index."""
+    """Create document metadata entries for the index."""
     metadata: list[dict] = []
 
     for document in documents:
@@ -47,6 +47,8 @@ def build_document_metadata(documents: list[dict]) -> list[dict]:
                 "canonical_url": document.get("canonical_url", ""),
                 "title": document.get("title", ""),
                 "snippet": document.get("snippet", ""),
+                "title_tokens": document.get("title_tokens", []),
+                "heading_tokens": document.get("heading_tokens", []),
                 "doc_length": doc_length,
                 "outgoing_links": document.get("outgoing_links", []),
                 "crawl_time": document.get("crawl_time", ""),
