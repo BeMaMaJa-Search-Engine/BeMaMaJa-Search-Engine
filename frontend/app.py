@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import html
+import io
 import re
 import sys
 import time
@@ -14,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.batch import format_result_rows, run_single_batch_query
 from src.preprocessing import preprocess
 from src.reranking import rerank
 from src.retrieval import retrieve
@@ -86,13 +89,17 @@ def add_css() -> None:
             color: #f8fafc;
             font-size: 1.35rem;
             font-weight: 800;
+            width: fit-content;
         }
         .metric-source {
             color: #64748b;
-            font-size: .68rem;
+            font-size: .6rem;
             position: absolute;
-            right: .75rem;
-            top: .65rem;
+            right: .55rem;
+            bottom: .65rem;
+        }
+        div[data-testid="stButton"] button p {
+            white-space: nowrap;
         }
         div[data-testid="stTextInput"] div[data-baseweb="input"] {
             position: relative;
@@ -357,6 +364,50 @@ def normalize_results(response: object) -> list[dict]:
     return results
 
 
+def parse_batch_queries(file_bytes: bytes) -> list[tuple[str, str]]:
+    """Read query_id and query text from an uploaded UTF-8 TSV file."""
+    try:
+        text = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ValueError("The query file must use UTF-8 encoding.") from error
+
+    queries = []
+    for line_number, row in enumerate(csv.reader(io.StringIO(text), delimiter="\t"), start=1):
+        if not row or not any(value.strip() for value in row):
+            continue
+        if len(row) != 2:
+            raise ValueError(f"Line {line_number} must contain query_id, TAB, and query text.")
+
+        query_id, query = (value.strip() for value in row)
+        if not query_id or not query:
+            raise ValueError(f"Line {line_number} contains an empty query ID or query.")
+        queries.append((query_id, query))
+
+    if not queries:
+        raise ValueError("The query file does not contain any queries.")
+    return queries
+
+
+def build_batch_output(file_bytes: bytes, index: dict) -> dict:
+    """Run the team batch pipeline and return the official TSV in memory."""
+    queries = parse_batch_queries(file_bytes)
+    rows = []
+    start = time.perf_counter()
+
+    for query_id, query in queries:
+        query_result = run_single_batch_query(query_id, query, index, top_k=100)
+        rows.extend(format_result_rows(query_id, query_result["results"], top_k=100))
+
+    output = io.StringIO()
+    csv.writer(output, delimiter="\t", lineterminator="\n").writerows(rows)
+    return {
+        "data": output.getvalue(),
+        "query_count": len(queries),
+        "result_count": len(rows),
+        "runtime": time.perf_counter() - start,
+    }
+
+
 @st.cache_data(show_spinner=False)
 def cached_smart_summary(
     doc_id: int,
@@ -523,7 +574,7 @@ def format_runtime(seconds: float) -> str:
 
 def metric_cards(runtime: float, indexed: int, shown: int, index_source: str) -> None:
     cols = st.columns(3)
-    source_label = "Supabase Storage" if index_source == "Supabase Storage" else "Local file"
+    source_label = "Supabase" if index_source == "Supabase Storage" else "Local"
     values = [
         ("Search time", format_runtime(runtime), ""),
         ("Indexed pages", indexed, source_label),
@@ -732,6 +783,44 @@ def main() -> None:
                 )
                 if not custom_instruction.strip():
                     st.caption("Add a focus instruction. Until then, the standard relevance mode is used.")
+
+        with st.expander("Batch Search"):
+            st.caption("Upload UTF-8 TSV: query_id, TAB, query text.")
+            batch_file = st.file_uploader(
+                "Upload queries.tsv",
+                type=["tsv"],
+                label_visibility="collapsed",
+            )
+            if batch_file is not None:
+                batch_bytes = batch_file.getvalue()
+                batch_hash = hashlib.sha1(batch_bytes).hexdigest()
+
+                if st.button("Run Batch Search", type="primary", use_container_width=True):
+                    st.session_state.pop("batch_output", None)
+                    try:
+                        with st.spinner("Running batch queries..."):
+                            batch_output = build_batch_output(batch_bytes, index)
+                        batch_output["source_hash"] = batch_hash
+                        st.session_state["batch_output"] = batch_output
+                    except ValueError as error:
+                        st.error(str(error))
+                    except Exception as error:
+                        st.error(f"Batch search failed ({type(error).__name__}).")
+
+                batch_output = st.session_state.get("batch_output", {})
+                if batch_output.get("source_hash") == batch_hash:
+                    st.caption(
+                        f"{batch_output['query_count']} queries | "
+                        f"{batch_output['result_count']} results | "
+                        f"{batch_output['runtime']:.2f}s"
+                    )
+                    st.download_button(
+                        "Download results.tsv",
+                        data=batch_output["data"],
+                        file_name="results.tsv",
+                        mime="text/tab-separated-values",
+                        use_container_width=True,
+                    )
 
     query = st.text_input("Search", value="tuebingen attractions", placeholder="Try: food and drinks")
     if not documents:
