@@ -5,10 +5,12 @@
 data/*.json
 data/*.jsonl
 data/*.tmp
+
+# Old data logs
 data_baseline/*
 data_regex/*
 data_regex_harsh/*
-
+data_at-cut/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

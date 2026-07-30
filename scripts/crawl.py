@@ -39,6 +39,18 @@ def main() -> None:
         help="Number of concurrent worker threads fetching pages.",
     )
     parser.add_argument(
+        "--explorer-workers",
+        dest="explorer_workers",
+        type=int,
+        default=0,
+        help=(
+            "How many of --workers are 'Explorers' instead of 'Horses'. Horses claim urls in the frontier's "
+            "normal cooldown order. Explorers deliberately claim from whichever ready domain currently has "
+            "the fewest urls queued, to keep small domains from being starved by big ones. Clamped to "
+            "[0, workers]; default 0 means all workers are Horses (original behavior)."
+        ),
+    )
+    parser.add_argument(
         "--checkpoint-every",
         type=int,
         default=250,
@@ -69,6 +81,7 @@ def main() -> None:
         polite_delay=args.polite_delay,
         checkpoint_every=args.checkpoint_every,
         workers=args.workers,
+        explorer_workers=args.explorer_workers,
         fresh=args.fresh,
         **kwargs,
     )

@@ -56,7 +56,8 @@ def _is_blacklisted_domain(domain: str) -> bool:
     domain = domain.lower()
     return any(domain == blocked or domain.endswith("." + blocked) for blocked in BLACKLISTED_DOMAINS)
 
-# How often (seconds) an idle worker is allowed to log a "still waiting" heartbeat.
+# How often (seconds) an idle worker is allowed to log a "still waiting" heartbeat, so long
+# waits on a domain cooldown are visible instead of just going silent.
 _IDLE_HEARTBEAT_INTERVAL = 20.0
 
 # HTTP statuses worth retrying rather than permanently blacklisting the URL
@@ -253,6 +254,8 @@ class CrawlerState:
         """Add a single url to one priority level's domain-aware frontier."""
         if url in level.url_set:
             return
+        if level == self.frontier_low:
+            return
         try:
             domain = get_domain(url)
         except Exception:
@@ -331,6 +334,48 @@ class CrawlerState:
 
         return None
 
+    def _claim_least_saturated(self, level: _FrontierLevel, now: float) -> str | None:
+        """Pop one ready url from a single priority level's domain-aware frontier, but deliberately target the ready domain with the fewest queued urls."""
+        domains, url_set = level.domains, level.url_set
+        while True:
+            ready = [
+                (len(queue), domain)
+                for domain, queue in domains.items()
+                if queue and self.domain_next_time.get(domain, 0.0) <= now
+            ]
+            if not ready:
+                return None
+
+            min_len = min(size for size, _domain in ready)
+            domain = random.choice([d for size, d in ready if size == min_len])
+            queue = domains[domain]
+
+            claimed_url: str | None = None
+            while queue:
+                url = queue.popleft()
+                url_set.discard(url)
+                if url in self.visited_urls or not is_probably_html_url(url):
+                    continue
+                claimed_url = url
+                break
+
+            if not queue:
+                domains.pop(domain, None)
+
+            if claimed_url is None:
+                # Every url queued for this domain was stale/invalid; try the next least-saturated domain instead of returning empty-handed.
+                continue
+
+            # Reserve this domain's next slot immediately, same as the heap-based claim path, and keep the
+            # heap in sync so a subsequent Horse claim sees the up-to-date cooldown for this domain.
+            self.domain_next_time[domain] = now + self.polite_delay
+            if queue:
+                heapq.heappush(level.heap, (self.domain_next_time[domain], random.random(), domain))
+            self.in_flight += 1
+            self.in_flight_urls.add(claimed_url)
+            self.attempted += 1
+            return claimed_url
+
     def _earliest_ready_time(self, level: _FrontierLevel) -> float | None:
         """Peek (without popping) the true next_allowed_time of the earliest domain in a level's heap."""
         if not level.heap:
@@ -338,10 +383,14 @@ class CrawlerState:
         stored_time, _tiebreak, domain = level.heap[0]
         return max(stored_time, self.domain_next_time.get(domain, 0.0))
 
-    def claim_next_url(self) -> tuple[str | None, str, str | None]:
+    def claim_next_url(self, role: str = "horse") -> tuple[str | None, str, str | None]:
         """Try to claim the next URL that is both in a frontier and not on its domain's cooldown. frontier_high (Tuebingen-related discoveries) is always scanned before frontier_low.
-        Returns (url, "ok", level) if a URL was claimed (this also marks it in-flight and reserves its domain's cooldown slot) - level is "high" or "low",
-        identifying which frontier it came from.
+
+        `role` picks the claim strategy within whichever level is scanned:
+        - "horse": claim in cooldown order off the heap (the original behavior) - whichever ready domain comes up next.
+        - "explorer": claim from the ready domain with the fewest queued urls, deliberately spreading coverage to under-represented domains instead of following cooldown order.
+
+        Returns (url, "ok", level) if a URL was claimed (this also marks it in-flight and reserves its domain's cooldown slot) - level is "high" or "low", identifying which frontier it came from.
         Returns (None, "wait", None) if nothing is ready yet but there's still work outstanding, or (None, "done", None) if the crawl should stop (max_pages reached, or both
         frontiers are empty with no other worker in-flight that could still add to them).
         """
@@ -351,10 +400,11 @@ class CrawlerState:
                 return None, "done", None
 
             now = time.time()
-            claimed_url = self._claim_from_heap(self.frontier_high, now)
+            claim = self._claim_least_saturated if role == "explorer" else self._claim_from_heap
+            claimed_url = claim(self.frontier_high, now)
             level = "high"
             if claimed_url is None:
-                claimed_url = self._claim_from_heap(self.frontier_low, now)
+                claimed_url = claim(self.frontier_low, now)
                 level = "low"
 
             if claimed_url is not None:
@@ -414,6 +464,7 @@ class CrawlerState:
                     and link not in self.frontier_low.url_set
                     and link not in self.in_flight_urls
                 ):
+                    # TODO: Remove this but instead of saving to low we throw it away for now since we never touch low
                     self._enqueue(link, target_level)
 
     def record_visited(self, url: str, status_code: Any) -> None:
@@ -577,7 +628,7 @@ def _fetch_with_hard_timeout(session: requests.Session, url: str, timeout: float
     return outcome["response"]
 
 
-def _process_url(state: CrawlerState, session: requests.Session, worker_id: int, url: str, timeout: float, level_name: str | None) -> None:
+def _process_url(state: CrawlerState, session: requests.Session, worker_id: int, role: str, url: str, timeout: float, level_name: str | None) -> None:
     """Fetch, parse, and (maybe) save a single URL. Always releases the URL's in-flight/cooldown slot when done."""
     domain = "unknown"
     status_code: Any = None
@@ -664,12 +715,15 @@ def _process_url(state: CrawlerState, session: requests.Session, worker_id: int,
             state.record_visited(url, status_code or "error")
     finally:
         elapsed_ms = (time.time() - state.start_time) * 1000
-        logger.info(f"worker={worker_id} t+{elapsed_ms:.0f}ms domain={domain} url={url} {reason}")
+        logger.info(f"worker={worker_id} role={role} t+{elapsed_ms:.0f}ms domain={domain} url={url} {reason}")
         state.finish_url(domain, url, time.time())
 
 
-def _worker_loop(state: CrawlerState, worker_id: int, timeout: float, checkpoint_paths: tuple[Path, Path, Path]) -> None:
-    """Main loop for a single worker thread: repeatedly claim a ready URL and process it."""
+def _worker_loop(state: CrawlerState, worker_id: int, role: str, timeout: float, checkpoint_paths: tuple[Path, Path, Path]) -> None:
+    """Main loop for a single worker thread: repeatedly claim a ready URL and process it.
+
+    `role` is either "horse" (claims in the frontier's normal cooldown order) or "explorer" (deliberately claims from whichever ready domain currently has the fewest queued urls).
+    """
     session = requests.Session()
     session.headers.update({
         "User-Agent": USER_AGENT,
@@ -678,13 +732,13 @@ def _worker_loop(state: CrawlerState, worker_id: int, timeout: float, checkpoint
     last_heartbeat = 0.0
     while not state.stop_event.is_set():
         try:
-            url, status, level_name = state.claim_next_url()
+            url, status, level_name = state.claim_next_url(role)
         except Exception as exc:
             # claim_next_url() guards its own risky calls, so this shouldn't fire -
             # but an uncaught exception here would silently kill this thread, and a
             # dead worker permanently loses its share of concurrency. Log and retry
             # rather than let the thread disappear.
-            logger.info(f"worker={worker_id} error claiming next url: {type(exc).__name__}: {exc}")
+            logger.info(f"worker={worker_id} role={role} error claiming next url: {type(exc).__name__}: {exc}")
             time.sleep(0.05)
             continue
 
@@ -697,7 +751,7 @@ def _worker_loop(state: CrawlerState, worker_id: int, timeout: float, checkpoint
             if now - last_heartbeat >= _IDLE_HEARTBEAT_INTERVAL:
                 last_heartbeat = now
                 logger.info(
-                    f"worker={worker_id} idle: waiting up to {wait_seconds:.1f}s for a domain cooldown to clear "
+                    f"worker={worker_id} role={role} idle: waiting up to {wait_seconds:.1f}s for a domain cooldown to clear "
                     f"({state.frontier_status_summary()})"
                 )
             time.sleep(max(0.01, wait_seconds))
@@ -705,9 +759,9 @@ def _worker_loop(state: CrawlerState, worker_id: int, timeout: float, checkpoint
 
         assert url is not None
         try:
-            _process_url(state, session, worker_id, url, timeout, level_name)
+            _process_url(state, session, worker_id, role, url, timeout, level_name)
         except Exception as exc:
-            logger.info(f"worker={worker_id} unexpected crash processing {url}: {type(exc).__name__}: {exc}")
+            logger.info(f"worker={worker_id} role={role} unexpected crash processing {url}: {type(exc).__name__}: {exc}")
 
         try:
             # Once shutdown has started, skip periodic checkpointing here. crawl() already performs one final save after all workers join.
@@ -744,12 +798,22 @@ def crawl(
     timeout: float = 8.0,
     polite_delay: float = 0.6,
     checkpoint_every: int = 5,
-    workers: int = 4,
+    workers: int = 8,
+    explorer_workers: int = 2,
     fresh: bool = False,
     max_retries: int = 3,
 ) -> dict[str, Any]:
     """Run the crawl: fetch frontier URLs (frontier_high first, then frontier_low) with `workers` concurrent
-    threads, filter/save relevant pages, and persist crawler state."""
+    threads, filter/save relevant pages, and persist crawler state.
+
+    Workers come in two flavors, both always honoring frontier_high before frontier_low:
+    - Horses (the default): claim in the frontier's normal cooldown order, same as before.
+    - Explorers: deliberately claim from whichever ready domain currently has the fewest urls
+      queued, to keep small/under-represented domains from being starved by big ones.
+
+    `explorer_workers` sets how many of the `workers` threads are Explorers (the rest are Horses);
+    it's clamped to [0, workers].
+    """
     raw_pages_path = Path(raw_pages_path)
     frontier_path = Path(frontier_path)
     visited_path = Path(visited_path)
@@ -776,7 +840,9 @@ def crawl(
         pages = raw.get("pages", [])
         frontier_data = read_json(frontier_path, {"frontier_high": {}, "frontier_low": {}, "domain_next_time": {}})
         frontier_high = _flatten_frontier(frontier_data.get("frontier_high", {}))
-        frontier_low = _flatten_frontier(frontier_data.get("frontier_low", {}))
+        #frontier_low = _flatten_frontier(frontier_data.get("frontier_low", {}))
+        # TODO: Remove this and reset but frontier low is never touched so we overwrite it with nothing to save memory and cpu time
+        frontier_low = []
         domain_next_time = frontier_data.get("domain_next_time", {}) or {}
         if not frontier_high and not frontier_low:
             # Fresh start: seed URLs are presumed Tuebingen-relevant, so they go straight into frontier_high.
@@ -804,20 +870,26 @@ def crawl(
         max_retries=max_retries,
     )
 
+    total_workers = max(1, workers)
+    num_explorers = max(0, min(explorer_workers, total_workers))
+    # First `num_explorers` worker slots are Explorers, the rest are Horses.
+    roles = ["explorer" if i < num_explorers else "horse" for i in range(total_workers)]
+
     logger.info(
         f"starting crawl: {len(frontier_high)} urls in frontier_high, {len(frontier_low)} urls in frontier_low, "
-        f"{len(pages)} pages already saved, max_pages={max_pages}, workers={workers}, fresh={fresh}"
+        f"{len(pages)} pages already saved, max_pages={max_pages}, workers={total_workers} "
+        f"(horses={total_workers - num_explorers}, explorers={num_explorers}), fresh={fresh}"
     )
 
     checkpoint_paths = (raw_pages_path, frontier_path, visited_path)
     threads = [
         threading.Thread(
             target=_worker_loop,
-            args=(state, i, timeout, checkpoint_paths),
-            name=f"crawler-worker-{i}",
+            args=(state, i, roles[i], timeout, checkpoint_paths),
+            name=f"crawler-worker-{i}-{roles[i]}",
             daemon=True,
         )
-        for i in range(max(1, workers))
+        for i in range(total_workers)
     ]
 
     for t in threads:
@@ -868,7 +940,9 @@ def crawl(
         "visited_size": len(visited_entries),
         "timeout": timeout,
         "polite_delay": polite_delay,
-        "workers": workers,
+        "workers": total_workers,
+        "explorer_workers": num_explorers,
+        "horse_workers": total_workers - num_explorers,
         "last_run_interrupted": state.interrupted,
         "interrupted_runs": prior.get("interrupted_runs", 0) + (1 if state.interrupted else 0),
         "elapsed_seconds_this_run": round(elapsed_seconds, 2),

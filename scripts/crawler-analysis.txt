@@ -1,0 +1,356 @@
+
+===== Crawl Statistics =====
+
+baseline
+  Pages found: 5187
+  Pages/minute: 8.21
+  Top 10 domains:
+    github.io                           94
+    iwm-tuebingen.de                    72
+    tuebingen.ai                        69
+    neuroschool-tuebingen.de            68
+    mewi-projekte.de                    65
+    ohne-makler.net                     64
+    startupschool-tuebingen.com         63
+    german-hospital-directory.com       56
+    ellis.eu                            56
+    au.de                               56
+
+Regex
+  Pages found: 5201
+  Pages/minute: 8.92
+  Top 10 domains:
+    github.io                           88
+    iwm-tuebingen.de                    66
+    hih-tuebingen.de                    65
+    nmi.de                              65
+    tuebingen.ai                        63
+    neuroschool-tuebingen.de            59
+    krone-tuebingen.de                  57
+    mewi-projekte.de                    57
+    ohne-makler.net                     57
+    startupschool-tuebingen.com         56
+
+Regex + Harsh frontier
+  Pages found: 20001
+  Pages/minute: 31.48
+  Top 10 domains:
+    iwm-tuebingen.de                    5282
+    german-hospital-directory.com       392
+    hih-tuebingen.de                    391
+    uni-tuebingen.de                    367
+    gotouniversity.com                  332
+    my-stuwe.de                         305
+    learning-systems.org                297
+    nmi.de                              295
+    archive.org                         286
+    sched.com                           286
+
+Regex + Harsh frontier + blacklist + mail cut in link
+  Pages found: 20002
+  Pages/minute: 28.19
+  Top 10 domains:
+    iwm-tuebingen.de                    638
+    ellis.eu                            587
+    sched.com                           575
+    ibs-bw.de                           567
+    uni-tuebingen.de                    545
+    nmi.de                              490
+    wanderlog.com                       456
+    hih-tuebingen.de                    426
+    factgrid.de                         425
+    cyber-valley.de                     420
+
+... + Horses & Explorers
+  Pages found: 50001
+  Pages/minute: 29.40
+  Top 10 domains:
+    unict.it                            2605
+    sched.com                           2325
+    iwm-tuebingen.de                    2300
+    ellis.eu                            1523
+    wanderlog.com                       1389
+    uni-tuebingen.de                    1370
+    app.link                            1339
+    cyber-valley.de                     1182
+    factgrid.de                         1155
+    huggingface.co                      1110
+
+
+===== Frontier Statistics (entry-wise) =====
+
+baseline
+  Total frontier entries: 520480
+  Total distinct domains: 2211
+  Top 50 domains:
+    cwur.org                            19346
+    kirchbau.de                         13582
+    net.                                9453
+    google.com                          8738
+    lmscloud.net                        8634
+    wikipedia.org                       8611
+    gesundheitsforschung-bmftr.de       7982
+    arabischesbuch.de                   7704
+    uni-tuebingen.de                    7392
+    dbinfrago.com                       5625
+    doi.org                             5354
+    biwakschachtel-tuebingen.de         5150
+    archive.org                         5115
+    medidaktik.de                       5034
+    imi-online.de                       4993
+    facebook.com                        4596
+    ladv.de                             4486
+    com.uy                              4290
+    engelvoelkers.com                   4148
+    diamond-pride.com                   4007
+    thelocal.de                         3989
+    focus-gesundheit.de                 3870
+    cvents.eu                           3839
+    xn--immobilienmakler-mnchen-starnberg-8pd.de 3583
+    tuemarkt.de                         3513
+    antiquitaeten-tuebingen.de          3492
+    badenwurtemberghotel.com            3457
+    werkenntdenbesten.de                3280
+    kayak.com                           3154
+    wanderlog.com                       2911
+    instagram.com                       2867
+    komoot.com                          2757
+    orte.de                             2569
+    kayak.de                            2433
+    insiva-gmbh.de                      2383
+    citypopulation.de                   2364
+    stadtbranchenbuch.com               2231
+    kalliope-verbund.info               2220
+    linkedin.com                        2210
+    zieglersche.de                      2192
+    golocal.de                          2098
+    leo-bw.de                           1978
+    swt-vorteilskarte.de                1888
+    twitter.com                         1875
+    die-linke-bw.de                     1832
+    leipzig.de                          1819
+    wikimedia.org                       1800
+    hackerspaces.org                    1779
+    kayak.com.au                        1773
+    nih.gov                             1754
+
+Regex
+  Total frontier entries: 499193
+  Total distinct domains: 2029
+  Top 50 domains:
+    cwur.org                            19353
+    kirchbau.de                         13602
+    freitag.immobilien                  9660
+    lovable.app                         9660
+    google.com                          9079
+    net.                                8026
+    gesundheitsforschung-bmftr.de       7989
+    wikipedia.org                       7636
+    arabischesbuch.de                   7419
+    lmscloud.net                        7206
+    uni-tuebingen.de                    6579
+    doi.org                             5841
+    archive.org                         5658
+    dbinfrago.com                       5633
+    medidaktik.de                       5043
+    imi-online.de                       4603
+    com.uy                              4298
+    biwakschachtel-tuebingen.de         4273
+    facebook.com                        4103
+    ladv.de                             3943
+    diamond-pride.com                   3632
+    xn--immobilienmakler-mnchen-starnberg-8pd.de 3589
+    tuemarkt.de                         3310
+    werkenntdenbesten.de                3263
+    antiquitaeten-tuebingen.de          3254
+    kayak.com                           3158
+    ibs-bw.de                           2811
+    badenwurtemberghotel.com            2746
+    instagram.com                       2711
+    komoot.com                          2645
+    orte.de                             2576
+    wanderlog.com                       2516
+    idw-online.de                       2463
+    kayak.de                            2442
+    leo-bw.de                           2399
+    insiva-gmbh.de                      2390
+    citypopulation.de                   2372
+    nih.gov                             2355
+    stadtbranchenbuch.com               2226
+    zieglersche.de                      2192
+    linkedin.com                        2062
+    kalliope-verbund.info               2022
+    11880.com                           1944
+    leipzig.de                          1827
+    hackerspaces.org                    1786
+    kayak.com.au                        1784
+    youtube.com                         1664
+    twitter.com                         1657
+    chemanager-online.com               1630
+    zew.de                              1551
+
+Regex + Harsh frontier
+  Total frontier entries: 343158
+  Total distinct domains: 154
+  Top 50 domains:
+    archive.org                         86367
+    wikipedia.org                       37936
+    google.com                          20788
+    cwur.org                            17836
+    doi.org                             14962
+    sched.com                           10459
+    numista.com                         8715
+    nih.gov                             8065
+    wanderlog.com                       7177
+    zxc.wiki                            7155
+    dblp.org                            6694
+    wikimedia.org                       5984
+    uni-tuebingen.de                    5469
+    researchgate.net                    4745
+    dagstuhl.de                         4394
+    uni-trier.de                        4201
+    ebird.org                           4157
+    thetrainline.com                    3787
+    wikidata.org                        3640
+    thelocal.de                         3621
+    mpg.de                              3576
+    nature.com                          3502
+    theconversation.com                 3397
+    vivat-lingua.de                     3257
+    linkedin.com                        3047
+    outdooractive.com                   2989
+    cambridge.org                       2691
+    jobrxiv.org                         2517
+    github.com                          2329
+    biorxiv.org                         2104
+    facebook.com                        2075
+    citypopulation.de                   1909
+    scribd.com                          1905
+    amazon.com                          1785
+    factgrid.de                         1752
+    arxiv.org                           1708
+    twitter.com                         1511
+    mygermanuniversity.com              1489
+    openlibrary.org                     1294
+    cyber-valley.de                     1286
+    ohne-makler.net                     1151
+    ventusky.com                        1075
+    springer.com                        1022
+    tum.de                              914
+    newadvent.org                       903
+    iwm-tuebingen.de                    841
+    dzne.de                             827
+    climatechange.ai                    826
+    reddit.com                          815
+    bsky.app                            811
+
+Regex + Harsh frontier + blacklist + mail cut in link
+  Total frontier entries: 437794
+  Total distinct domains: 117
+  Top 50 domains:
+    ibs-bw.de                           52321
+    google.com                          29061
+    uni-trier.de                        28858
+    dblp.org                            24778
+    dagstuhl.de                         24493
+    sched.com                           24272
+    cwur.org                            18590
+    doi.org                             18478
+    engelvoelkers.com                   18026
+    wikipedia.org                       16536
+    zxc.wiki                            14914
+    repec.org                           14743
+    wanderlog.com                       10145
+    researchgate.net                    9392
+    nih.gov                             8059
+    uni-tuebingen.de                    7096
+    thetrainline.com                    7095
+    linkedin.com                        6352
+    cambridge.org                       4974
+    wikimedia.org                       4769
+    github.com                          4214
+    mpg.de                              3957
+    ebird.org                           3591
+    thelocal.de                         3328
+    outdooractive.com                   3316
+    bsky.app                            3206
+    theconversation.com                 3080
+    reddit.com                          2964
+    vivat-lingua.de                     2947
+    wikidata.org                        2934
+    biorxiv.org                         2931
+    psu.edu                             2718
+    bibsonomy.org                       2683
+    pubpeer.com                         2664
+    facebook.com                        2661
+    mygermanuniversity.com              2309
+    nature.com                          2290
+    jobrxiv.org                         2208
+    twitter.com                         2181
+    arxiv.org                           2152
+    semanticscholar.org                 2012
+    ohne-makler.net                     1609
+    citypopulation.de                   1601
+    springer.com                        1494
+    iwm-tuebingen.de                    1463
+    factgrid.de                         1445
+    openarchieven.nl                    1440
+    cyber-valley.de                     1252
+    crossref.org                        1124
+    openalex.org                        1066
+
+... + Horses & Explorers
+  Total frontier entries: 887821
+  Total distinct domains: 99
+  Top 50 domains:
+    google.com                          65066
+    sched.com                           64650
+    wikipedia.org                       62601
+    ibs-bw.de                           55360
+    zxc.wiki                            49801
+    doi.org                             43506
+    repec.org                           33354
+    uni-trier.de                        32255
+    researchgate.net                    30429
+    wanderlog.com                       30347
+    dblp.org                            25791
+    wikimedia.org                       21704
+    nih.gov                             20961
+    dagstuhl.de                         20696
+    kb.se                               18392
+    scribd.com                          18043
+    thetrainline.com                    17335
+    cwur.org                            16694
+    engelvoelkers.com                   16425
+    uni-tuebingen.de                    14463
+    dbpedia.org                         12624
+    linkedin.com                        12065
+    factgrid.de                         10886
+    iwm-tuebingen.de                    10589
+    github.com                          9248
+    nature.com                          8360
+    facebook.com                        7322
+    ebird.org                           7224
+    wikidata.org                        7175
+    amazon.com                          6864
+    outdooractive.com                   6679
+    biorxiv.org                         6645
+    acm.org                             6534
+    springer.com                        6331
+    twitter.com                         5212
+    huggingface.co                      4865
+    citypopulation.de                   4863
+    openarchieven.nl                    4577
+    jewishstudies.de                    4242
+    wikitravel.org                      4218
+    omio.com                            4186
+    upenn.edu                           4107
+    lxlweb                              4060
+    arxiv.org                           3505
+    reddit.com                          3445
+    psu.edu                             3356
+    theconversation.com                 3282
+    mpg.de                              3171
+    openlibrary.org                     3133
+    wiley.com                           2709
+

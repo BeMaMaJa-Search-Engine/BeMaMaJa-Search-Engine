@@ -8,6 +8,7 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Iterable
 
+from src.dedup import deduplicate_pages
 from src.utils import read_json, short_snippet, write_json
 
 # Unicode-aware tokenizer: matches runs of letters/digits from any script (ä, ö, ü, ß)
@@ -20,6 +21,7 @@ TUEBINGEN_UBINGEN_RE = re.compile(r"\btubingen\b", re.IGNORECASE)
 TUEBINGEN_MOJIBAKE_RE = re.compile(r"\bt(?:\u00fc|\u00c3\u00bc|\u00e3\u00bc|\u00e3\u0153|\u0103\u017a)bingen\b", re.IGNORECASE)
 
 SUMMARY_OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "preprocessor_summary.json"
+DEDUP_REPORT_PATH = Path(__file__).resolve().parent.parent / "data" / "dedup_report.json"
 
 # Below this many pages we just run sequentially.
 MP_PAGE_THRESHOLD = 100
@@ -155,6 +157,19 @@ def create_preprocessed_pages(
     raw = read_json(raw_pages_path, {"pages": []})
     pages = raw.get("pages", [])
 
+    # Step 1: drop exact- and near-duplicate pages before doing any tokenizing
+    # work on them, since that work would just be thrown away later anyway.
+    dedup_start = time.perf_counter()
+    pages, dedup_report = deduplicate_pages(pages)
+    dedup_elapsed = time.perf_counter() - dedup_start
+    print(
+        f"dedup: {dedup_report['input_pages']} pages -> {dedup_report['output_pages']} "
+        f"({dedup_report['exact_duplicates_removed']} exact + "
+        f"{dedup_report['near_duplicates_removed']} near duplicates removed) in {dedup_elapsed:.3f}s"
+    )
+    DEDUP_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    write_json(DEDUP_REPORT_PATH, dedup_report)
+
     parallel = use_multiprocessing and len(pages) >= MP_PAGE_THRESHOLD
     if parallel:
         num_workers = max(1, min(processes or cpu_count(), len(pages)))
@@ -179,6 +194,12 @@ def create_preprocessed_pages(
         "elapsed_seconds": elapsed_seconds,
         "mode": mode,
         "num_workers": num_workers,
+        "dedup": {
+            "input_pages": dedup_report["input_pages"],
+            "exact_duplicates_removed": dedup_report["exact_duplicates_removed"],
+            "near_duplicates_removed": dedup_report["near_duplicates_removed"],
+            "elapsed_seconds": dedup_elapsed,
+        },
     }
     if parallel:
         # Each worker process has its own lru_cache, so hit/miss counts cant be meaningfully aggregated across processes.
