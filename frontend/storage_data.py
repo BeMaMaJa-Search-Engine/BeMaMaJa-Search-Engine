@@ -116,6 +116,9 @@ def create_page_content_manager() -> PageContentManager | None:
 
 
 def read_storage_settings(secrets: object | None = None) -> StorageSettings:
+    if os.getenv("MSE_LOCAL_ONLY", "").strip() == "1":
+        return StorageSettings(url="", secret_key="", bucket="")
+
     values = {
         "SUPABASE_URL": os.getenv("SUPABASE_URL", "").strip(),
         "SUPABASE_SECRET_KEY": os.getenv("SUPABASE_SECRET_KEY", "").strip(),

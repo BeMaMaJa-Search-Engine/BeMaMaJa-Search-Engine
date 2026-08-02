@@ -4,6 +4,7 @@ import csv
 import hashlib
 import html
 import io
+import os
 import re
 import sys
 import time
@@ -15,6 +16,9 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+if "--local" in sys.argv:
+    os.environ["MSE_LOCAL_ONLY"] = "1"
 
 from src.batch import format_result_rows, run_single_batch_query
 from src.preprocessing import preprocess
@@ -336,14 +340,12 @@ def load_index(index_mtime: float) -> tuple[dict, str, str]:
 
 @st.cache_data(show_spinner=False)
 def cached_retrieve(query: str, top_k: int, index_mtime: float) -> dict:
-    start = time.perf_counter()
     index = load_index(index_mtime)[0]
     first_stage = retrieve(query, index, top_k=top_k)
     reranked = rerank(first_stage, index)
     return {
         "results": normalize_results(reranked),
         "query_tokens": first_stage.get("query_tokens", []),
-        "runtime": time.perf_counter() - start,
     }
 
 
@@ -847,8 +849,14 @@ def main() -> None:
         st.info("Enter a query to search the local JSON index.")
         return
 
+    search_key = (query, top_k, index_mtime)
+    search_started = time.perf_counter()
     retrieval_output = cached_retrieve(query, top_k, index_mtime)
-    runtime = float(retrieval_output.get("runtime", 0.0))
+    measured_runtime = time.perf_counter() - search_started
+    if st.session_state.get("last_search_key") != search_key:
+        st.session_state["last_search_key"] = search_key
+        st.session_state["last_search_runtime"] = measured_runtime
+    runtime = float(st.session_state.get("last_search_runtime", measured_runtime))
 
     results = retrieval_output.get("results", [])
     query_terms = preprocess(query, use_stemming=False)
