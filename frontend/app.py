@@ -23,7 +23,15 @@ from src.retrieval import retrieve
 from src.utils import project_path
 from llm_summary import generate_llm_summary, gemini_is_configured
 from loading_animation import water_cooling_loader
-from storage_data import INDEX_OBJECT, RAW_PAGES_OBJECT, StorageDataError, load_json_source
+from storage_data import (
+    INDEX_OBJECT,
+    RAW_PAGES_OBJECT,
+    PageContentState,
+    StorageDataError,
+    create_page_content_manager,
+    load_json_source,
+    start_page_content_loading,
+)
 
 SCORE_LABELS = [
     ("BM25", "normalized_bm25"),
@@ -423,20 +431,39 @@ def cached_smart_summary(
 
 
 @st.cache_resource(show_spinner=False)
-def raw_body_lookup(raw_pages_mtime: float) -> tuple[dict[int, str], str, str]:
+def page_content_manager():
+    return create_page_content_manager()
+
+
+@st.cache_resource(show_spinner=False)
+def page_content_loader(raw_pages_mtime: float, _manager) -> PageContentState:
     _ = raw_pages_mtime
     local_path = project_path("data", "raw_pages.json")
     storage_secrets = {} if local_path.exists() else st.secrets
-    try:
-        raw_pages, source, warning = load_json_source(
-            local_path,
-            RAW_PAGES_OBJECT,
-            storage_secrets,
-        )
-    except StorageDataError as exc:
-        return {}, "unavailable", str(exc)
-    bodies = {int(page.get("doc_id", -1)): page.get("body", "") for page in raw_pages.get("pages", [])}
-    return bodies, source, warning
+    return start_page_content_loading(
+        local_path,
+        RAW_PAGES_OBJECT,
+        storage_secrets,
+        manager=_manager,
+    )
+
+
+@st.fragment(run_every=1.0)
+def page_content_progress(state: PageContentState) -> None:
+    status = state.snapshot()
+    if status["error"] or status["ready"]:
+        st.rerun()
+
+    percent = round(status["progress"] * 100)
+    st.markdown(
+        f"""
+        <div class="sidebar-item">
+          <div class="sidebar-label">Page content</div>
+          <div class="sidebar-value">Loading ({percent}%)</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def split_sentences(text: str) -> list[str]:
@@ -597,7 +624,6 @@ def render_card(
     result: dict,
     doc: dict,
     body: str,
-    raw_pages_mtime: float,
     query_text: str,
     query_terms: list[str],
     corrected_query_tokens: list[str],
@@ -612,7 +638,6 @@ def render_card(
     active_settings_key = f"active_{summary_key}"
     settings_hash = hashlib.sha1(f"{ai_mode}:{custom_instruction}".encode("utf-8")).hexdigest()[:10]
     requested_llm_key = f"llm_{summary_key}_{settings_hash}"
-    storage_warning_key = f"storage_warning_{summary_key}_{settings_hash}"
     active_settings_hash = st.session_state.get(active_settings_key)
     settings_changed = bool(active_settings_hash and active_settings_hash != settings_hash)
     needs_summary = not active_settings_hash or settings_changed
@@ -671,11 +696,6 @@ def render_card(
             if needs_summary:
                 if requested_llm_key not in st.session_state:
                     summary_body = body
-                    if not summary_body:
-                        raw_bodies, _raw_source, raw_warning = raw_body_lookup(raw_pages_mtime)
-                        summary_body = raw_bodies.get(int(result.get("doc_id", -1)), "")
-                        if raw_warning:
-                            st.session_state[storage_warning_key] = raw_warning
                     with water_cooling_loader(cooling_placeholder):
                         st.session_state[requested_llm_key] = generate_llm_summary(
                             result=result,
@@ -700,11 +720,6 @@ def render_card(
             summary_label = "AI Summary"
             if not summary:
                 fallback_body = body
-                if not fallback_body:
-                    fallback_body = raw_body_lookup(raw_pages_mtime)[0].get(
-                        int(result.get("doc_id", -1)),
-                        "",
-                    )
                 summary = cached_smart_summary(
                     int(result.get("doc_id", -1)),
                     query_text,
@@ -725,9 +740,6 @@ def render_card(
                 st.caption(f"{llm_summary.error} Showing local fallback summary.")
             elif llm_summary.source:
                 st.caption(f"Summary source: {llm_summary.source}")
-            if st.session_state.get(storage_warning_key):
-                st.caption(st.session_state[storage_warning_key])
-
         st.markdown(
             f"""
             <div class="snippet">{highlight(result.get("snippet", ""), terms_to_mark)}</div>
@@ -761,9 +773,14 @@ def main() -> None:
 
     index_mtime = file_mtime("data", "index.json")
     raw_pages_mtime = file_mtime("data", "raw_pages.json")
-    index, index_source, index_warning = load_index(index_mtime)
+    content_manager = page_content_manager()
+    with st.spinner("Loading search index..."):
+        index, index_source, index_warning = load_index(index_mtime)
     documents = index.get("documents", [])
     docs = doc_lookup(index)
+    page_content_state = (
+        page_content_loader(raw_pages_mtime, content_manager) if documents else None
+    )
 
     if index_warning:
         st.warning(index_warning)
@@ -850,15 +867,19 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-    raw_bodies, _raw_source, raw_warning = raw_body_lookup(raw_pages_mtime)
-    if raw_warning:
-        st.warning(f"{raw_warning} Found-term badges are using title, URL, and snippet only.")
-
     prepared_results = []
     for result in results:
         doc = docs.get(int(result.get("doc_id", -1)), {})
-        body = raw_bodies.get(int(result.get("doc_id", -1)), "")
+        body = page_content_state.body_for(int(result.get("doc_id", -1)))
         prepared_results.append((result, doc, body))
+
+    page_content_status = page_content_state.snapshot()
+    if page_content_status["error"]:
+        page_content_text = "Unavailable"
+    elif page_content_status["ready"]:
+        page_content_text = "Ready (100%)"
+    else:
+        page_content_text = f"Loading ({round(page_content_status['progress'] * 100)}%)"
 
     with st.sidebar:
         gemini_ready = gemini_is_configured(st.secrets)
@@ -894,6 +915,24 @@ def main() -> None:
                 <div class="sidebar-value">{len(prepared_results)}</div>
               </div>
             </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if page_content_status["error"] or page_content_status["ready"]:
+            st.markdown(
+                f"""
+                <div class="sidebar-item">
+                  <div class="sidebar-label">Page content</div>
+                  <div class="sidebar-value">{esc(page_content_text)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            page_content_progress(page_content_state)
+
+        st.markdown(
+            f"""
             <div class="sidebar-section">
               <div class="sidebar-section-title">AI configuration</div>
               <div class="sidebar-item">
@@ -915,6 +954,11 @@ def main() -> None:
             """,
             unsafe_allow_html=True,
         )
+        if page_content_status["error"]:
+            st.caption(page_content_status["error"])
+        elif page_content_status["ready"]:
+            if page_content_status["warning"]:
+                st.caption(page_content_status["warning"])
 
     metric_cards(runtime, len(documents), len(prepared_results), index_source)
 
@@ -927,7 +971,6 @@ def main() -> None:
             result,
             doc,
             body,
-            raw_pages_mtime,
             query,
             query_terms,
             corrected_query_tokens,
