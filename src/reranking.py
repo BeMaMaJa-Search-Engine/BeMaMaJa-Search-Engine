@@ -12,7 +12,42 @@ def compute_field_boost(query_tokens: list[str], target_tokens: list[str], weigh
     return float(matches * weight)
 
 
-def rerank(retrieval_results, index, title_weight=2.0, heading_weight=1.0, bm25_importance=0.7, field_importance=0.3):
+def build_incoming_link_counts(link_graph: dict[str, list[int]]) -> dict[int, int]:
+    """Count how many indexed documents link to each target document."""
+    if not isinstance(link_graph, dict):
+        return {}
+
+    incoming_counts: dict[int, int] = {}
+
+    for source_doc_id, target_doc_ids in link_graph.items():
+        try:
+            int(source_doc_id)
+        except (TypeError, ValueError):
+            continue
+
+        if not isinstance(target_doc_ids, list):
+            continue
+
+        for target_doc_id in target_doc_ids:
+            try:
+                target_doc_id_int = int(target_doc_id)
+            except (TypeError, ValueError):
+                continue
+
+            incoming_counts[target_doc_id_int] = incoming_counts.get(target_doc_id_int, 0) + 1
+
+    return incoming_counts
+
+
+def rerank(
+    retrieval_results,
+    index,
+    title_weight=2.0,
+    heading_weight=1.0,
+    bm25_importance=0.65,
+    field_importance=0.20,
+    link_importance=0.15,
+):
     """
     Finale Version des Field-Boostings mit Score-Normalisierung.
     
@@ -32,6 +67,7 @@ def rerank(retrieval_results, index, title_weight=2.0, heading_weight=1.0, bm25_
 
     # schnelles Lookup für die Dokumente im Index
     doc_lookup = {str(d["doc_id"]): d for d in index_data.get("documents", [])}
+    incoming_link_counts = build_incoming_link_counts(index_data.get("link_graph", {}))
 
     candidates = retrieval_results.get("candidates", [])
     query_tokens = retrieval_results.get("query_tokens", [])
@@ -42,17 +78,24 @@ def rerank(retrieval_results, index, title_weight=2.0, heading_weight=1.0, bm25_
     # Listen für die rohen Scores
     raw_bm25_scores = []
     raw_field_scores = []
+    raw_link_scores = []
     
     # Temporäre Liste zum Zwischenspeichern
     temp_candidates = []
 
     # Rohe Scores berechnen
     for candidate in candidates:
-        doc_id = str(candidate["doc_id"])
+        doc_id = candidate["doc_id"]
+        doc_id_key = str(doc_id)
         bm25_score = candidate.get("bm25_score", 0.0)
+        try:
+            doc_id_int = int(doc_id)
+        except (TypeError, ValueError):
+            doc_id_int = None
+        raw_link_score = incoming_link_counts.get(doc_id_int, 0) if doc_id_int is not None else 0
         
         # Tokens aus dem Index
-        indexed_doc = doc_lookup.get(doc_id, {})
+        indexed_doc = doc_lookup.get(doc_id_key, {})
         title_tokens = indexed_doc.get("title_tokens", [])
         heading_tokens = indexed_doc.get("heading_tokens", [])
 
@@ -68,16 +111,19 @@ def rerank(retrieval_results, index, title_weight=2.0, heading_weight=1.0, bm25_
 
         raw_bm25_scores.append(bm25_score)
         raw_field_scores.append(total_field_score)
+        raw_link_scores.append(raw_link_score)
 
         temp_candidates.append({
             "candidate": candidate,
             "raw_bm25": bm25_score,
-            "raw_field": total_field_score
+            "raw_field": total_field_score,
+            "raw_link": raw_link_score
         })
 
     # Min-Max-Normalisierung vorbereiten
     min_bm25, max_bm25 = min(raw_bm25_scores), max(raw_bm25_scores)
     min_field, max_field = min(raw_field_scores), max(raw_field_scores)
+    min_link, max_link = min(raw_link_scores), max(raw_link_scores)
 
     # Hilfsfunktion zur Normalisierung
     def normalize(value, min_v, max_v):
@@ -98,8 +144,15 @@ def rerank(retrieval_results, index, title_weight=2.0, heading_weight=1.0, bm25_
         # Field Boost absolut normalisieren
         norm_field = min(1.0, item["raw_field"] / max_possible_field) if max_possible_field > 0 else 0.0
 
+        # LinkScore relativ normalisieren
+        norm_link = normalize(item["raw_link"], min_link, max_link)
+
         # Lineare Kombination
-        final_score = (bm25_importance * norm_bm25) + (field_importance * norm_field)
+        final_score = (
+            (bm25_importance * norm_bm25)
+            + (field_importance * norm_field)
+            + (link_importance * norm_link)
+        )
 
         updated_candidate = item["candidate"].copy()
         updated_candidate["score"] = round(final_score, 4)
@@ -109,7 +162,9 @@ def rerank(retrieval_results, index, title_weight=2.0, heading_weight=1.0, bm25_
             "normalized_bm25": round(norm_bm25, 4),
             "bm25_component": round(norm_bm25, 4),
             "normalized_field_boost": round(norm_field, 4),
-            "field_component": round(norm_field, 4)
+            "field_component": round(norm_field, 4),
+            "normalized_link": round(norm_link, 4),
+            "link_component": round(norm_link, 4)
         }
         
         reranked_candidates.append(updated_candidate)

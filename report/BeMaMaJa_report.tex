@@ -1,0 +1,158 @@
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[a4paper,top=17mm,bottom=18mm,left=20mm,right=20mm]{geometry}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{RuleGray}{gray}{0.75}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\setlist[itemize]{leftmargin=5mm,itemsep=1pt,topsep=2pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\figurename}{Figure}
+\renewcommand{\tablename}{Table}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small INFO4271 Modern Search Engines}
+\fancyhead[R]{\small Group Project Report}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\setlength{\headheight}{13pt}
+
+\begin{document}
+
+\begin{center}
+  {\Large\bfseries BeMaMaJa}\\[3pt]
+  {\normalsize Group Project Report -- INFO4271 Modern Search Engines}\\[7pt]
+  \textbf{Matthias Vetter, Marcel John, Janis Weller, Bernhard Fraidel}\\[2pt]
+  \url{https://github.com/BeMaMaJa-Search-Engine/BeMaMaJa-Search-Engine.git}
+\end{center}
+
+\begin{abstract}
+\end{abstract}
+
+\section{Data Collection and Crawling}
+
+\subsection{Corpus scope and seeds}
+
+\subsection{Crawler design}
+
+\subsection{Filtering and stored page representation}
+
+\begin{table}[h]
+\centering
+\caption{Final corpus summary.}
+\begin{tabularx}{0.88\linewidth}{@{}X r X r@{}}
+\toprule
+Saved English pages & & Attempted URLs & \\
+Pages with body text & & Unique domains & \\
+Median body length & & Crawl duration & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\newpage
+
+\section{Preprocessing and Index Construction}
+
+\subsection{Shared preprocessing contract}
+
+\subsection{Manual inverted index}
+
+\subsection{Build process and validation}
+
+\begin{table}[h]
+\centering
+\caption{Index statistics and build characteristics.}
+\begin{tabularx}{0.82\linewidth}{@{}X r@{}}
+\toprule
+Measure & Value \\
+\midrule
+Indexed documents & \\
+Vocabulary size & \\
+Average body length & \\
+Documents with outgoing links & \\
+Index size / build time & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Engineering justification}
+
+\newpage
+
+\section{Retrieval and Re-ranking}
+
+\subsection{Manual BM25 first stage}
+\[
+\mathrm{BM25}(d,q)=\sum_{t\in q}\log\!\left(1+\frac{N-df_t+0.5}{df_t+0.5}\right)
+\frac{tf_{t,d}(k_1+1)}{tf_{t,d}+k_1\left(1-b+b\frac{|d|}{\mathrm{avgdl}}\right)}.
+\]
+
+\subsection{Query processing}
+
+\subsection{Second-stage innovation}
+
+\subsection{Diagnostic evaluation}
+\begin{table}[h]
+\centering
+\caption{Ablation or diagnostic comparison.}
+\begin{tabularx}{0.92\linewidth}{@{}X c c X@{}}
+\toprule
+Configuration & Query 1 & Query 2 & Interpretation \\
+\midrule
+BM25 only & & & \\
+BM25 + innovation & & & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\newpage
+
+\section{Interface and Evaluation}
+
+\begin{minipage}[t]{0.49\linewidth}
+\centering
+\fbox{\parbox[c][42mm][c]{0.92\linewidth}{}}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\linewidth}
+\centering
+\fbox{\parbox[c][42mm][c]{0.92\linewidth}{}}
+\end{minipage}
+\begin{center}
+{\small\textbf{Figure 1.}}
+\end{center}
+
+\subsection{Interactive interface}
+
+\subsection{Batch and effectiveness evaluation}
+
+\begin{table}[h]
+\centering
+\caption{Final evaluation checklist.}
+\begin{tabularx}{0.9\linewidth}{@{}X X@{}}
+\toprule
+Requirement & Evidence \\
+\midrule
+Five queries, 100 URLs each & \\
+Average / maximum runtime & \\
+Final mean nDCG & \\
+Repository branch frozen & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Limitations and reproducibility}
+
+\end{document}
