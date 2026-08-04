@@ -169,7 +169,7 @@ def retrieve(query, index, top_k=1000, k1=1.2, b=0.75, assume_tuebingen_context=
         idf = compute_idf(N, df)
         # boosting tubingen since we have squed data
         if token == "tubingen":
-            idf *= 3.0
+            idf *= 2.0
         
         # Posting-Liste ablaufen
         for posting in inverted_index[token]:
