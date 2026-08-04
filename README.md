@@ -66,6 +66,7 @@ mse-tuebingen-search/
 |   |-- indexer.py
 |   |-- retrieval.py
 |   |-- reranking.py
+|   |-- diversify.py
 |   |-- batch.py
 |   `-- utils.py
 |-- frontend/
@@ -97,6 +98,7 @@ mse-tuebingen-search/
 - `src/indexer.py`: inverted index construction.
 - `src/retrieval.py`: BM25 retrieval.
 - `src/reranking.py`: second-stage ranking signals.
+- `src/diversify.py`: soft domain diversification after re-ranking.
 - `src/batch.py`: batch retrieval export.
 - `src/utils.py`: shared helper functions.
 - `frontend/app.py`: Streamlit user interface.
@@ -349,9 +351,9 @@ Example JSON:
 ### 6. Re-Ranking
 
 - Input: BM25 candidate results
-- Processing: add field boosts, pseudo relevance feedback bonus, link score bonus, optional semantic LSA/SVD score
+- Processing: add field boosts, pseudo relevance feedback, link and Tuebingen relevance signals, then apply a progressive domain penalty. The first result from one domain is unchanged; later results are increasingly reduced down to a minimum factor of 40 percent, but never removed by a hard domain limit.
 - Output: final ranked result list
-- Files: `src/reranking.py`, `src/retrieval.py`
+- Files: `src/reranking.py`, `src/diversify.py`, `src/retrieval.py`
 
 Example JSON:
 

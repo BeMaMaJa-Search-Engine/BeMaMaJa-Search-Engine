@@ -2,6 +2,8 @@ import json
 import math
 from collections import Counter
 
+from src.diversify import diversify_results
+
 NON_TUEBINGEN_LOCATION_TERMS = {
     "berlin",
     "bochum",
@@ -395,10 +397,9 @@ def rerank(
         
         reranked_candidates.append(updated_candidate)
 
-    # sortieren
+    # sortieren und danach zu viele Treffer derselben Domain sanft abschwaechen
     reranked_candidates = sorted(reranked_candidates, key=lambda x: x["score"], reverse=True)
-    for rank, candidate in enumerate(reranked_candidates, start=1):
-        candidate["rank"] = rank
+    reranked_candidates = diversify_results(reranked_candidates)
 
     return {
         "query_id": retrieval_results.get("query_id", "1"),
