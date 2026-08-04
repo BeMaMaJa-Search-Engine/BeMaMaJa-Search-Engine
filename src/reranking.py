@@ -75,9 +75,18 @@ def query_is_tuebingen_related(query_tokens: list[str]) -> bool:
 
 def is_tuebingen_central_document(document: dict) -> bool:
     """Return True if title, headings, or URL metadata indicate a Tuebingen-central document."""
-    title_heading_tokens = set(document.get("title_tokens", []) + document.get("heading_tokens", []))
-    if "tubingen" in title_heading_tokens:
-        return True
+    return compute_tuebingen_centrality_score(document) > 0.0
+
+
+def compute_tuebingen_centrality_score(document: dict) -> float:
+    """Compute a small centrality score for documents focused on Tuebingen."""
+    title_tokens = set(document.get("title_tokens", []))
+    heading_tokens = set(document.get("heading_tokens", []))
+
+    if "tubingen" in title_tokens:
+        return 1.0
+    if "tubingen" in heading_tokens:
+        return 0.8
 
     url_text = " ".join(
         [
@@ -87,7 +96,10 @@ def is_tuebingen_central_document(document: dict) -> bool:
         ]
     ).lower()
 
-    return "tuebingen" in url_text or "tubingen" in url_text
+    if "tuebingen" in url_text or "tubingen" in url_text:
+        return 0.6
+
+    return 0.0
 
 
 def collect_prf_terms(
@@ -182,10 +194,11 @@ def rerank(
     index,
     title_weight=0.7,
     heading_weight=0.3,
-    bm25_importance=0.65,
+    bm25_importance=0.60,
     field_importance=0.20,
     link_importance=0.10,
     prf_importance=0.05,
+    tuebingen_importance=0.05,
     force_tuebingen_filter=False,
 ):
     """
@@ -261,6 +274,7 @@ def rerank(
             heading_weight=heading_weight,
         )
         raw_prf_score = compute_prf_score(expansion_terms, title_tokens, heading_tokens)
+        raw_tuebingen_score = compute_tuebingen_centrality_score(indexed_doc)
 
         raw_bm25_scores.append(bm25_score)
         raw_link_scores.append(raw_link_score)
@@ -270,7 +284,8 @@ def rerank(
             "raw_bm25": bm25_score,
             "raw_field": total_field_score,
             "raw_link": raw_link_score,
-            "raw_prf": raw_prf_score
+            "raw_prf": raw_prf_score,
+            "raw_tuebingen": raw_tuebingen_score
         })
 
     # Min-Max-Normalisierung vorbereiten
@@ -295,6 +310,7 @@ def rerank(
         norm_link = normalize(item["raw_link"], min_link, max_link)
 
         norm_prf = item["raw_prf"]
+        norm_tuebingen = item["raw_tuebingen"]
 
         # Lineare Kombination
         final_score = (
@@ -302,6 +318,7 @@ def rerank(
             + (field_importance * norm_field)
             + (link_importance * norm_link)
             + (prf_importance * norm_prf)
+            + (tuebingen_importance * norm_tuebingen)
         )
 
         updated_candidate = item["candidate"].copy()
@@ -316,7 +333,9 @@ def rerank(
             "normalized_link": round(norm_link, 4),
             "link_component": round(norm_link, 4),
             "normalized_prf": round(norm_prf, 4),
-            "prf_component": round(norm_prf, 4)
+            "prf_component": round(norm_prf, 4),
+            "normalized_tuebingen": round(norm_tuebingen, 4),
+            "tuebingen_component": round(norm_tuebingen, 4)
         }
         updated_candidate["expansion_terms"] = expansion_terms
         
