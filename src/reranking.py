@@ -182,10 +182,10 @@ def rerank(
     index,
     title_weight=0.7,
     heading_weight=0.3,
-    bm25_importance=0.60,
+    bm25_importance=0.65,
     field_importance=0.20,
     link_importance=0.10,
-    prf_importance=0.10,
+    prf_importance=0.05,
     force_tuebingen_filter=False,
 ):
     """
