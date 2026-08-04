@@ -18,6 +18,7 @@ def compute_idf(N, df):
     return math.log(1.0 + (N - df + 0.5) / (df + 0.5))
 
 _CACHE = {}
+TUEBINGEN_CONTEXT_TOKEN = "tubingen"
 
 def _get_prepared_index(index):
     """
@@ -112,7 +113,17 @@ def correct_query_spelling(query_tokens: list[str], index_data: dict, max_distan
 
     return corrected_tokens
 
-def retrieve(query, index, top_k=100, k1=1.2, b=0.75):
+
+def add_tuebingen_context(query_tokens: list[str]) -> list[str]:
+    """
+    Add Tuebingen as an implicit local-search context token if it is not already present.
+    """
+    if TUEBINGEN_CONTEXT_TOKEN in set(query_tokens):
+        return query_tokens
+    return query_tokens + [TUEBINGEN_CONTEXT_TOKEN]
+
+
+def retrieve(query, index, top_k=100, k1=1.2, b=0.75, assume_tuebingen_context=False):
     """
     First-Stage-Retrieval mit dem BM25-Algorithmus.
     
@@ -133,10 +144,17 @@ def retrieve(query, index, top_k=100, k1=1.2, b=0.75):
     # Gesamtanzahl der Dokumente (N)
     N = len(documents)
     if N == 0:
-        return {"query": query, "query_tokens": [], "candidates": []}
+        return {
+            "query": query,
+            "query_tokens": [],
+            "assume_tuebingen_context": assume_tuebingen_context,
+            "candidates": [],
+        }
 
     query_tokens = preprocess(query)
     query_tokens = correct_query_spelling(query_tokens, index_data)
+    if assume_tuebingen_context:
+        query_tokens = add_tuebingen_context(query_tokens)
 
     # BM25 Scoring (Term-at-a-Time Ansatz)
     scores = defaultdict(float)
@@ -183,5 +201,6 @@ def retrieve(query, index, top_k=100, k1=1.2, b=0.75):
     return {
         "query": query,
         "query_tokens": query_tokens,
+        "assume_tuebingen_context": assume_tuebingen_context,
         "candidates": candidates
     }
