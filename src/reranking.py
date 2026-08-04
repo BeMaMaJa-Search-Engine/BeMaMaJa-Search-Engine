@@ -1,15 +1,28 @@
 import json
 
-def compute_field_boost(query_tokens: list[str], target_tokens: list[str], weight: float) -> float:
-    """
-    Berechnet den Feld-Boost basierend auf bereits vorverarbeiteten Tokens.
-    """
-    if not target_tokens or not query_tokens:
+def compute_field_boost(
+    query_tokens: list[str],
+    title_tokens: list[str],
+    heading_tokens: list[str],
+    title_weight: float = 0.7,
+    heading_weight: float = 0.3,
+) -> float:
+    """Compute a normalized field boost from unique query-token coverage."""
+    unique_query_tokens = set(query_tokens)
+    if not unique_query_tokens:
         return 0.0
-    
-    # Zähle Matches zwischen einzigartigen Query-Tokens und den Feld-Tokens
-    matches = sum(target_tokens.count(token) for token in set(query_tokens) if token in target_tokens)
-    return float(matches * weight)
+
+    title_token_set = set(title_tokens)
+    heading_token_set = set(heading_tokens)
+
+    title_matches = unique_query_tokens & title_token_set
+    heading_matches = unique_query_tokens & heading_token_set
+
+    title_coverage = len(title_matches) / len(unique_query_tokens)
+    heading_coverage = len(heading_matches) / len(unique_query_tokens)
+
+    field_boost = (title_weight * title_coverage) + (heading_weight * heading_coverage)
+    return max(0.0, min(1.0, field_boost))
 
 
 def build_incoming_link_counts(link_graph: dict[str, list[int]]) -> dict[int, int]:
@@ -42,8 +55,8 @@ def build_incoming_link_counts(link_graph: dict[str, list[int]]) -> dict[int, in
 def rerank(
     retrieval_results,
     index,
-    title_weight=2.0,
-    heading_weight=1.0,
+    title_weight=0.7,
+    heading_weight=0.3,
     bm25_importance=0.65,
     field_importance=0.20,
     link_importance=0.15,
@@ -77,7 +90,6 @@ def rerank(
 
     # Listen für die rohen Scores
     raw_bm25_scores = []
-    raw_field_scores = []
     raw_link_scores = []
     
     # Temporäre Liste zum Zwischenspeichern
@@ -104,13 +116,15 @@ def rerank(
             from src.preprocessing import preprocess
             title_tokens = preprocess(candidate["title"])
 
-        # Berechne individuelle Feld-Boosts
-        t_boost = compute_field_boost(query_tokens, title_tokens, title_weight)
-        h_boost = compute_field_boost(query_tokens, heading_tokens, heading_weight)
-        total_field_score = t_boost + h_boost
+        total_field_score = compute_field_boost(
+            query_tokens,
+            title_tokens,
+            heading_tokens,
+            title_weight=title_weight,
+            heading_weight=heading_weight,
+        )
 
         raw_bm25_scores.append(bm25_score)
-        raw_field_scores.append(total_field_score)
         raw_link_scores.append(raw_link_score)
 
         temp_candidates.append({
@@ -122,7 +136,6 @@ def rerank(
 
     # Min-Max-Normalisierung vorbereiten
     min_bm25, max_bm25 = min(raw_bm25_scores), max(raw_bm25_scores)
-    min_field, max_field = min(raw_field_scores), max(raw_field_scores)
     min_link, max_link = min(raw_link_scores), max(raw_link_scores)
 
     # Hilfsfunktion zur Normalisierung
@@ -132,17 +145,12 @@ def rerank(
         return (value - min_v) / (max_v - min_v)
 
     reranked_candidates = []
-    
-    max_possible_field = title_weight + heading_weight
-    
-    reranked_candidates = []
 
     for item in temp_candidates:
         # BM25 relativ normalisieren
         norm_bm25 = normalize(item["raw_bm25"], min_bm25, max_bm25)
         
-        # Field Boost absolut normalisieren
-        norm_field = min(1.0, item["raw_field"] / max_possible_field) if max_possible_field > 0 else 0.0
+        norm_field = item["raw_field"]
 
         # LinkScore relativ normalisieren
         norm_link = normalize(item["raw_link"], min_link, max_link)
