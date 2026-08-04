@@ -769,8 +769,8 @@ def main() -> None:
     st.markdown(
         """
         <div class="hero">
-          <div class="hero-title">Tuebingen Search Engine</div>
-          <div class="hero-subtitle">Explainable local search over English Tuebingen-related pages</div>
+          <div class="hero-title">Tübingen Search Engine</div>
+          <div class="hero-subtitle">Explainable local search over English Tübingen-related pages</div>
         </div>
         """,
         unsafe_allow_html=True,
