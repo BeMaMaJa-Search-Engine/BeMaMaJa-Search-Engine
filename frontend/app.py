@@ -24,7 +24,7 @@ from src.batch import format_result_rows, run_single_batch_query
 from src.preprocessing import preprocess
 from src.reranking import rerank
 from src.retrieval import retrieve
-from src.utils import project_path
+from src.utils import project_path, short_snippet
 from llm_summary import generate_llm_summary, gemini_is_configured
 from loading_animation import water_cooling_loader
 from storage_data import (
@@ -50,6 +50,8 @@ AI_MODE_OPTIONS = {
     "Summary only": "summary",
     "Custom focus": "custom",
 }
+
+DISPLAY_SNIPPET_CHARS = 255
 
 
 def add_css() -> None:
@@ -742,9 +744,10 @@ def render_card(
                 st.caption(f"{llm_summary.error} Showing local fallback summary.")
             elif llm_summary.source:
                 st.caption(f"Summary source: {llm_summary.source}")
+        display_snippet = short_snippet(result.get("snippet") or "", DISPLAY_SNIPPET_CHARS)
         st.markdown(
             f"""
-            <div class="snippet">{highlight(result.get("snippet", ""), terms_to_mark)}</div>
+            <div class="snippet">{highlight(display_snippet, terms_to_mark)}</div>
             """,
             unsafe_allow_html=True,
         )
