@@ -792,7 +792,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Search")
-        top_k = st.slider("Results", 5, 50, 10)
+        top_k = st.slider("Results", 5, 100, 10)
         with st.expander("AI Settings"):
             ai_mode_label = st.selectbox("AI response", list(AI_MODE_OPTIONS))
             ai_mode = AI_MODE_OPTIONS[ai_mode_label]
