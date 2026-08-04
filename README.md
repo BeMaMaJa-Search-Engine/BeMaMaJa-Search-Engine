@@ -6,6 +6,41 @@ The project will crawl English web pages related to Tuebingen, store them locall
 
 At this initial stage, the files are placeholders. Most internal pipeline files are JSON, while the official batch query and result files use the tab-separated text format required by the project instructions.
 
+## Quick Start
+
+Run all commands from the project root.
+
+1. Install the requirements:
+
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
+
+2. For local evaluation, start the app in local-only mode:
+
+   ```powershell
+   python -m streamlit run frontend/app.py -- --local
+   ```
+
+   The first `--` forwards `--local` to the app. This disables Supabase and
+   loads `data/index.json` (or `.json.gz`) and `data/raw_pages.json` (or
+   `.json.gz`) directly from the repository.
+
+3. For the deployed or server-backed version, start the app normally:
+
+   ```powershell
+   python -m streamlit run frontend/app.py
+   ```
+
+   When Supabase is configured, the app loads `index.json.gz` and
+   `raw_pages.json.gz` from the bucket specified in `.streamlit/secrets.toml`.
+   Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill
+   in the Supabase values if necessary. Local data files are used as a fallback.
+
+Streamlit prints the local browser URL after startup, usually
+<http://127.0.0.1:8501>. To enable AI-generated result summaries, add your
+`GEMINI_API_KEY` to `.streamlit/secrets.toml`; otherwise this key is optional.
+
 ## Project Structure
 
 ```text

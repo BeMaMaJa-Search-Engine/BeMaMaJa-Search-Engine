@@ -1,0 +1,31 @@
+query_id	query	category	word_count	expected_corrections
+1	tübingen	no_errors	1	0
+2	tübingen attractions	no_errors	2	0
+3	food and drinks	no_errors	3	0
+4	university library opening hours	no_errors	4	0
+5	botanical garden plants in tübingen	no_errors	5	0
+6	best student housing near university campus	no_errors	6	0
+7	public transport from station to old town	no_errors	7	0
+8	activities and museums for rainy days in tübingen	no_errors	8	0
+9	affordable restaurants serving vegetarian food near the neckar river	no_errors	9	0
+10	history of hölderlinturm and famous poets connected with the city	no_errors	10	0
+11	tbuingen	realistic	1	1
+12	ncekar restaurants	realistic	2	1
+13	msueum opening hours	realistic	3	1
+14	student huosing near university	realistic	4	1
+15	botanical gadren opening hours today	realistic	5	1
+16	how to reach hohentubign csatle museum	realistic	6	2
+17	best vgeetarian restaurants in tbuingen city center	realistic	7	2
+18	bus cnonection from main sattion to university clinic	realistic	8	2
+19	family atcivities near ncekar river during rainy wekeend weather	realistic	9	3
+20	where can sutdents find afofrdable rooms close to cmapus libraries	realistic	10	3
+21	tbuingen	errors_only	1	1
+22	ncekar msueum	errors_only	2	2
+23	csatle oepning huors	errors_only	3	3
+24	uinversity lbirary ctaalog saerch	errors_only	4	4
+25	botaincal gadren vsiitor ifnormation tdoay	errors_only	5	5
+26	sutdent huosing afofrdable romos cmapus tbuingen	errors_only	6	6
+27	pbulic tarnsport cnetral sattion cilnic cmapus tbuingen	errors_only	7	7
+28	fmaily atcivities cihldren riany wekeend msueum tbuingen eevnts	errors_only	8	8
+29	vgeetarian rsetaurant lcoal fodo dirnks ncekar rvier tbuingen cneter	errors_only	9	9
+30	hsitory hloderlin twoer fmaous pooets ciity wakling tuorism odltown tbuingen	errors_only	10	10
