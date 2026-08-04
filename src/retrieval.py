@@ -123,7 +123,7 @@ def add_tuebingen_context(query_tokens: list[str]) -> list[str]:
     return query_tokens + [TUEBINGEN_CONTEXT_TOKEN]
 
 
-def retrieve(query, index, top_k=100, k1=1.2, b=0.75, assume_tuebingen_context=True):
+def retrieve(query, index, top_k=1000, k1=1.2, b=0.75, assume_tuebingen_context=True):
     """
     First-Stage-Retrieval mit dem BM25-Algorithmus.
     
@@ -167,6 +167,9 @@ def retrieve(query, index, top_k=100, k1=1.2, b=0.75, assume_tuebingen_context=T
         # IDF für den aktuellen Query-Term berechnen
         df = doc_frequencies.get(token, len(inverted_index[token]))
         idf = compute_idf(N, df)
+        # boosting tubingen since we have squed data
+        if token == "tubingen":
+            idf *= 3.0
         
         # Posting-Liste ablaufen
         for posting in inverted_index[token]:
