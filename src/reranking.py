@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 
 def compute_field_boost(
     query_tokens: list[str],
@@ -52,14 +53,70 @@ def build_incoming_link_counts(link_graph: dict[str, list[int]]) -> dict[int, in
     return incoming_counts
 
 
+def collect_prf_terms(
+    candidates: list[dict],
+    doc_lookup: dict[str, dict],
+    query_tokens: list[str],
+    feedback_docs: int = 5,
+    max_terms: int = 5,
+) -> list[str]:
+    """Collect pseudo relevance feedback terms from top-ranked title and heading tokens."""
+    generic_tokens = {
+        "thing",
+        "page",
+        "home",
+        "contact",
+        "legal",
+        "compani",
+        "menu",
+        "search",
+        "result",
+    }
+    query_token_set = set(query_tokens)
+    term_counts: Counter[str] = Counter()
+
+    for candidate in candidates[:feedback_docs]:
+        doc_id = candidate.get("doc_id")
+        indexed_doc = doc_lookup.get(str(doc_id), {})
+        feedback_tokens = indexed_doc.get("title_tokens", []) + indexed_doc.get("heading_tokens", [])
+
+        for token in feedback_tokens:
+            if token in query_token_set:
+                continue
+            if len(token) < 3:
+                continue
+            if token in generic_tokens:
+                continue
+            term_counts[token] += 1
+
+    return [term for term, _ in term_counts.most_common(max_terms)]
+
+
+def compute_prf_score(
+    expansion_terms: list[str],
+    title_tokens: list[str],
+    heading_tokens: list[str],
+) -> float:
+    """Compute normalized coverage of PRF expansion terms in title and heading tokens."""
+    unique_expansion_terms = set(expansion_terms)
+    if not unique_expansion_terms:
+        return 0.0
+
+    document_tokens = set(title_tokens + heading_tokens)
+    matched_terms = unique_expansion_terms & document_tokens
+    prf_score = len(matched_terms) / len(unique_expansion_terms)
+    return max(0.0, min(1.0, prf_score))
+
+
 def rerank(
     retrieval_results,
     index,
     title_weight=0.7,
     heading_weight=0.3,
-    bm25_importance=0.65,
+    bm25_importance=0.60,
     field_importance=0.20,
-    link_importance=0.15,
+    link_importance=0.10,
+    prf_importance=0.10,
 ):
     """
     Finale Version des Field-Boostings mit Score-Normalisierung.
@@ -94,6 +151,7 @@ def rerank(
     
     # Temporäre Liste zum Zwischenspeichern
     temp_candidates = []
+    expansion_terms = collect_prf_terms(candidates, doc_lookup, query_tokens)
 
     # Rohe Scores berechnen
     for candidate in candidates:
@@ -123,6 +181,7 @@ def rerank(
             title_weight=title_weight,
             heading_weight=heading_weight,
         )
+        raw_prf_score = compute_prf_score(expansion_terms, title_tokens, heading_tokens)
 
         raw_bm25_scores.append(bm25_score)
         raw_link_scores.append(raw_link_score)
@@ -131,7 +190,8 @@ def rerank(
             "candidate": candidate,
             "raw_bm25": bm25_score,
             "raw_field": total_field_score,
-            "raw_link": raw_link_score
+            "raw_link": raw_link_score,
+            "raw_prf": raw_prf_score
         })
 
     # Min-Max-Normalisierung vorbereiten
@@ -155,11 +215,14 @@ def rerank(
         # LinkScore relativ normalisieren
         norm_link = normalize(item["raw_link"], min_link, max_link)
 
+        norm_prf = item["raw_prf"]
+
         # Lineare Kombination
         final_score = (
             (bm25_importance * norm_bm25)
             + (field_importance * norm_field)
             + (link_importance * norm_link)
+            + (prf_importance * norm_prf)
         )
 
         updated_candidate = item["candidate"].copy()
@@ -172,8 +235,11 @@ def rerank(
             "normalized_field_boost": round(norm_field, 4),
             "field_component": round(norm_field, 4),
             "normalized_link": round(norm_link, 4),
-            "link_component": round(norm_link, 4)
+            "link_component": round(norm_link, 4),
+            "normalized_prf": round(norm_prf, 4),
+            "prf_component": round(norm_prf, 4)
         }
+        updated_candidate["expansion_terms"] = expansion_terms
         
         reranked_candidates.append(updated_candidate)
 
