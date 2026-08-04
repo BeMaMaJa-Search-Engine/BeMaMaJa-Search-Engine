@@ -1,4 +1,5 @@
 import json
+import math
 from collections import Counter
 
 def compute_field_boost(
@@ -57,11 +58,13 @@ def collect_prf_terms(
     candidates: list[dict],
     doc_lookup: dict[str, dict],
     query_tokens: list[str],
+    document_frequencies: dict[str, int] | None = None,
+    num_docs: int = 0,
     feedback_docs: int = 5,
     max_terms: int = 5,
     min_feedback_field_boost: float = 0.5,
 ) -> list[str]:
-    """Collect pseudo relevance feedback terms from top-ranked title and heading tokens."""
+    """Collect IDF-weighted pseudo relevance feedback terms from top-ranked fields."""
     generic_tokens = {
         "thing",
         "page",
@@ -75,6 +78,7 @@ def collect_prf_terms(
     }
     query_token_set = set(query_tokens)
     term_counts: Counter[str] = Counter()
+    document_frequencies = document_frequencies or {}
 
     for candidate in candidates[:feedback_docs]:
         doc_id = candidate.get("doc_id")
@@ -101,7 +105,17 @@ def collect_prf_terms(
                 continue
             term_counts[token] += 1
 
-    return [term for term, _ in term_counts.most_common(max_terms)]
+    if not term_counts:
+        return []
+
+    def prf_term_score(item: tuple[str, int]) -> tuple[float, int, str]:
+        term, feedback_count = item
+        df = document_frequencies.get(term, 0)
+        idf = math.log((num_docs + 1) / (df + 1)) if num_docs > 0 else 1.0
+        return (feedback_count * idf, feedback_count, term)
+
+    ranked_terms = sorted(term_counts.items(), key=prf_term_score, reverse=True)
+    return [term for term, _ in ranked_terms[:max_terms]]
 
 
 def compute_prf_score(
@@ -150,6 +164,8 @@ def rerank(
     # schnelles Lookup für die Dokumente im Index
     doc_lookup = {str(d["doc_id"]): d for d in index_data.get("documents", [])}
     incoming_link_counts = build_incoming_link_counts(index_data.get("link_graph", {}))
+    document_frequencies = index_data.get("document_frequencies", {})
+    num_docs = len(index_data.get("documents", []))
 
     candidates = retrieval_results.get("candidates", [])
     query_tokens = retrieval_results.get("query_tokens", [])
@@ -163,7 +179,13 @@ def rerank(
     
     # Temporäre Liste zum Zwischenspeichern
     temp_candidates = []
-    expansion_terms = collect_prf_terms(candidates, doc_lookup, query_tokens)
+    expansion_terms = collect_prf_terms(
+        candidates,
+        doc_lookup,
+        query_tokens,
+        document_frequencies=document_frequencies,
+        num_docs=num_docs,
+    )
 
     # Rohe Scores berechnen
     for candidate in candidates:
