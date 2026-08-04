@@ -123,7 +123,7 @@ def add_tuebingen_context(query_tokens: list[str]) -> list[str]:
     return query_tokens + [TUEBINGEN_CONTEXT_TOKEN]
 
 
-def retrieve(query, index, top_k=100, k1=1.2, b=0.75, assume_tuebingen_context=False):
+def retrieve(query, index, top_k=100, k1=1.2, b=0.75, assume_tuebingen_context=True):
     """
     First-Stage-Retrieval mit dem BM25-Algorithmus.
     
