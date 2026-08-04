@@ -90,11 +90,17 @@ def run_single_batch_query(
     index: dict,
     top_k: int = 100,
     use_reranking: bool = True,
+    assume_tuebingen_context: bool = False,
 ) -> dict:
     """Run retrieval for a single batch query and return ranked results."""
     start_time = time.perf_counter()
 
-    retrieval_result = retrieve(query, index, top_k=top_k)
+    retrieval_result = retrieve(
+        query,
+        index,
+        top_k=top_k,
+        assume_tuebingen_context=assume_tuebingen_context,
+    )
     retrieval_result["query_id"] = query_id
 
     if use_reranking:
@@ -108,6 +114,7 @@ def run_single_batch_query(
     return {
         "query_id": query_id,
         "query": query,
+        "assume_tuebingen_context": assume_tuebingen_context,
         "results": results,
         "num_results": len(results),
         "runtime_seconds": runtime_seconds,
@@ -121,6 +128,7 @@ def run_batch(
     summary_output_path: str = "data/batch_summary.json",
     top_k: int = 100,
     use_reranking: bool = True,
+    assume_tuebingen_context: bool = False,
 ) -> dict:
     """Run batch retrieval and write official TSV results plus a JSON summary."""
     start_time = time.perf_counter()
@@ -139,6 +147,7 @@ def run_batch(
             index=index,
             top_k=top_k,
             use_reranking=use_reranking,
+            assume_tuebingen_context=assume_tuebingen_context,
         )
         query_results.append(query_result)
         result_rows.extend(
@@ -166,6 +175,7 @@ def run_batch(
         "total_results": len(result_rows),
         "top_k": top_k,
         "use_reranking": use_reranking,
+        "assume_tuebingen_context": assume_tuebingen_context,
         "elapsed_seconds": elapsed_seconds,
         "average_runtime_seconds": average_runtime_seconds,
     }
