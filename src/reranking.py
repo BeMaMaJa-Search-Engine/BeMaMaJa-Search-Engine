@@ -99,6 +99,7 @@ def collect_prf_terms(
     feedback_docs: int = 5,
     max_terms: int = 5,
     min_feedback_field_boost: float = 0.5,
+    force_tuebingen_filter: bool = False,
 ) -> list[str]:
     """Collect IDF-weighted pseudo relevance feedback terms from top-ranked fields."""
     generic_tokens = {
@@ -113,7 +114,7 @@ def collect_prf_terms(
         "result",
     }
     query_token_set = set(query_tokens)
-    require_tuebingen_centrality = query_is_tuebingen_related(query_tokens)
+    require_tuebingen_centrality = force_tuebingen_filter or query_is_tuebingen_related(query_tokens)
     term_counts: Counter[str] = Counter()
     document_frequencies = document_frequencies or {}
 
@@ -185,6 +186,7 @@ def rerank(
     field_importance=0.20,
     link_importance=0.10,
     prf_importance=0.10,
+    force_tuebingen_filter=False,
 ):
     """
     Finale Version des Field-Boostings mit Score-Normalisierung.
@@ -227,6 +229,7 @@ def rerank(
         query_tokens,
         document_frequencies=document_frequencies,
         num_docs=num_docs,
+        force_tuebingen_filter=force_tuebingen_filter,
     )
 
     # Rohe Scores berechnen
