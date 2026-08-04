@@ -59,6 +59,7 @@ def collect_prf_terms(
     query_tokens: list[str],
     feedback_docs: int = 5,
     max_terms: int = 5,
+    min_feedback_field_boost: float = 0.5,
 ) -> list[str]:
     """Collect pseudo relevance feedback terms from top-ranked title and heading tokens."""
     generic_tokens = {
@@ -78,7 +79,18 @@ def collect_prf_terms(
     for candidate in candidates[:feedback_docs]:
         doc_id = candidate.get("doc_id")
         indexed_doc = doc_lookup.get(str(doc_id), {})
-        feedback_tokens = indexed_doc.get("title_tokens", []) + indexed_doc.get("heading_tokens", [])
+        title_tokens = indexed_doc.get("title_tokens", [])
+        heading_tokens = indexed_doc.get("heading_tokens", [])
+
+        feedback_field_boost = compute_field_boost(
+            query_tokens,
+            title_tokens,
+            heading_tokens,
+        )
+        if feedback_field_boost < min_feedback_field_boost:
+            continue
+
+        feedback_tokens = title_tokens + heading_tokens
 
         for token in feedback_tokens:
             if token in query_token_set:
