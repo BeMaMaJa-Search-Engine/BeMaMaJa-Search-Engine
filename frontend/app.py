@@ -343,10 +343,10 @@ def load_index(index_mtime: float) -> tuple[dict, str, str]:
 @st.cache_data(show_spinner=False)
 def cached_retrieve(query: str, top_k: int, index_mtime: float) -> dict:
     index = load_index(index_mtime)[0]
-    first_stage = retrieve(query, index, top_k=top_k)
+    first_stage = retrieve(query, index, top_k=1000)
     reranked = rerank(first_stage, index)
     return {
-        "results": normalize_results(reranked),
+        "results": normalize_results(reranked)[:top_k],
         "query_tokens": first_stage.get("query_tokens", []),
     }
 
