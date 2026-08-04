@@ -2,6 +2,20 @@ import json
 import math
 from collections import Counter
 
+NON_TUEBINGEN_LOCATION_TERMS = {
+    "berlin",
+    "freiburg",
+    "gunzburg",
+    "heidelberg",
+    "karlsruh",
+    "konstanz",
+    "ludwigsburg",
+    "munich",
+    "stuttgart",
+    "ulm",
+}
+
+
 def compute_field_boost(
     query_tokens: list[str],
     title_tokens: list[str],
@@ -54,6 +68,28 @@ def build_incoming_link_counts(link_graph: dict[str, list[int]]) -> dict[int, in
     return incoming_counts
 
 
+def query_is_tuebingen_related(query_tokens: list[str]) -> bool:
+    """Return True if the query explicitly contains the normalized Tuebingen token."""
+    return "tubingen" in set(query_tokens)
+
+
+def is_tuebingen_central_document(document: dict) -> bool:
+    """Return True if title, headings, or URL metadata indicate a Tuebingen-central document."""
+    title_heading_tokens = set(document.get("title_tokens", []) + document.get("heading_tokens", []))
+    if "tubingen" in title_heading_tokens:
+        return True
+
+    url_text = " ".join(
+        [
+            document.get("url", ""),
+            document.get("canonical_url", ""),
+            document.get("fetched_url", ""),
+        ]
+    ).lower()
+
+    return "tuebingen" in url_text or "tubingen" in url_text
+
+
 def collect_prf_terms(
     candidates: list[dict],
     doc_lookup: dict[str, dict],
@@ -77,12 +113,16 @@ def collect_prf_terms(
         "result",
     }
     query_token_set = set(query_tokens)
+    require_tuebingen_centrality = query_is_tuebingen_related(query_tokens)
     term_counts: Counter[str] = Counter()
     document_frequencies = document_frequencies or {}
 
     for candidate in candidates[:feedback_docs]:
         doc_id = candidate.get("doc_id")
         indexed_doc = doc_lookup.get(str(doc_id), {})
+        if require_tuebingen_centrality and not is_tuebingen_central_document(indexed_doc):
+            continue
+
         title_tokens = indexed_doc.get("title_tokens", [])
         heading_tokens = indexed_doc.get("heading_tokens", [])
 
@@ -102,6 +142,8 @@ def collect_prf_terms(
             if len(token) < 3:
                 continue
             if token in generic_tokens:
+                continue
+            if require_tuebingen_centrality and token in NON_TUEBINGEN_LOCATION_TERMS:
                 continue
             term_counts[token] += 1
 
