@@ -4,15 +4,23 @@ from collections import Counter
 
 NON_TUEBINGEN_LOCATION_TERMS = {
     "berlin",
+    "bochum",
+    "esslingen",
     "freiburg",
+    "freudenstadt",
     "gunzburg",
     "heidelberg",
     "karlsruh",
     "konstanz",
     "ludwigsburg",
     "munich",
+    "pforzheim",
     "stuttgart",
     "ulm",
+}
+
+NON_TUEBINGEN_LOCATION_PHRASES = {
+    "baden-baden",
 }
 
 
@@ -98,6 +106,39 @@ def compute_tuebingen_centrality_score(document: dict) -> float:
 
     if "tuebingen" in url_text or "tubingen" in url_text:
         return 0.6
+
+    return 0.0
+
+
+def compute_foreign_location_penalty(
+    document: dict,
+    foreign_location_terms: set[str] | None = None,
+) -> float:
+    """Compute a small penalty for documents focused on non-Tuebingen cities."""
+    location_terms = foreign_location_terms or NON_TUEBINGEN_LOCATION_TERMS
+    title_tokens = set(document.get("title_tokens", []))
+    heading_tokens = set(document.get("heading_tokens", []))
+    title_text = document.get("title", "").lower()
+
+    if title_tokens & location_terms:
+        return 1.0
+    if any(phrase in title_text for phrase in NON_TUEBINGEN_LOCATION_PHRASES):
+        return 1.0
+    if heading_tokens & location_terms:
+        return 0.7
+
+    url_text = " ".join(
+        [
+            document.get("url", ""),
+            document.get("canonical_url", ""),
+            document.get("fetched_url", ""),
+        ]
+    ).lower()
+
+    if any(term in url_text for term in location_terms):
+        return 0.4
+    if any(phrase in url_text for phrase in NON_TUEBINGEN_LOCATION_PHRASES):
+        return 0.4
 
     return 0.0
 
@@ -199,6 +240,7 @@ def rerank(
     link_importance=0.10,
     prf_importance=0.05,
     tuebingen_importance=0.05,
+    location_penalty_importance=0.10,
     force_tuebingen_filter=False,
 ):
     """
@@ -226,6 +268,7 @@ def rerank(
 
     candidates = retrieval_results.get("candidates", [])
     query_tokens = retrieval_results.get("query_tokens", [])
+    use_location_penalty = force_tuebingen_filter or query_is_tuebingen_related(query_tokens)
     
     if not candidates:
         return {"query_id": retrieval_results.get("query_id", "1"), "query": retrieval_results.get("query", ""), "results": []}
@@ -275,6 +318,11 @@ def rerank(
         )
         raw_prf_score = compute_prf_score(expansion_terms, title_tokens, heading_tokens)
         raw_tuebingen_score = compute_tuebingen_centrality_score(indexed_doc)
+        raw_location_penalty = (
+            compute_foreign_location_penalty(indexed_doc)
+            if use_location_penalty
+            else 0.0
+        )
 
         raw_bm25_scores.append(bm25_score)
         raw_link_scores.append(raw_link_score)
@@ -285,7 +333,8 @@ def rerank(
             "raw_field": total_field_score,
             "raw_link": raw_link_score,
             "raw_prf": raw_prf_score,
-            "raw_tuebingen": raw_tuebingen_score
+            "raw_tuebingen": raw_tuebingen_score,
+            "raw_location_penalty": raw_location_penalty
         })
 
     # Min-Max-Normalisierung vorbereiten
@@ -311,6 +360,7 @@ def rerank(
 
         norm_prf = item["raw_prf"]
         norm_tuebingen = item["raw_tuebingen"]
+        norm_location_penalty = item["raw_location_penalty"]
 
         # Lineare Kombination
         final_score = (
@@ -319,7 +369,9 @@ def rerank(
             + (link_importance * norm_link)
             + (prf_importance * norm_prf)
             + (tuebingen_importance * norm_tuebingen)
+            - (location_penalty_importance * norm_location_penalty)
         )
+        final_score = max(0.0, final_score)
 
         updated_candidate = item["candidate"].copy()
         updated_candidate["score"] = round(final_score, 4)
@@ -335,7 +387,9 @@ def rerank(
             "normalized_prf": round(norm_prf, 4),
             "prf_component": round(norm_prf, 4),
             "normalized_tuebingen": round(norm_tuebingen, 4),
-            "tuebingen_component": round(norm_tuebingen, 4)
+            "tuebingen_component": round(norm_tuebingen, 4),
+            "normalized_foreign_location_penalty": round(norm_location_penalty, 4),
+            "foreign_location_penalty_component": round(norm_location_penalty, 4)
         }
         updated_candidate["expansion_terms"] = expansion_terms
         
