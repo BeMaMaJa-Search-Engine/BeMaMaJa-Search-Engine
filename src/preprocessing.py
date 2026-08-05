@@ -8,6 +8,8 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Iterable
 
+from langdetect import DetectorFactory, detect_langs
+
 from src.dedup import deduplicate_pages
 from src.utils import read_json, short_snippet, write_json
 
@@ -25,6 +27,21 @@ DEDUP_REPORT_PATH = Path(__file__).resolve().parent.parent / "data" / "dedup_rep
 
 # Below this many pages we just run sequentially.
 MP_PAGE_THRESHOLD = 100
+
+# Supplemental safety filter for obvious crawler false positives. The crawler's
+# English-only decision remains unchanged; this filter does not admit languages.
+LANGUAGE_SAMPLE_CHARS = 1000
+MIN_LANGUAGE_SAMPLE_LETTERS = 200
+NON_ENGLISH_CONFIDENCE = 0.95
+NON_LATIN_LETTER_RATIO = 0.25
+CLEARLY_UNSUPPORTED_LANGUAGES = {
+    # Common Latin-script false positives observed in, or plausible for, the crawl.
+    "fr", "id", "es", "it", "pt", "tr", "pl", "vi",
+    # Extra protection when a non-Latin page falls just below the script threshold.
+    "zh-cn", "zh-tw", "ja", "ko", "ar", "hi", "bn", "pa", "th",
+    "ru", "uk", "el", "he",
+}
+DetectorFactory.seed = 0
 
 ENGLISH_STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "been", "being", "by",
@@ -121,8 +138,74 @@ def tokens_from_list(values: Iterable[str]) -> list[str]:
     return preprocess(" ".join(values))
 
 
+def _balanced_language_sample(page: dict) -> str:
+    """Combine page metadata with bounded samples from the complete body."""
+    body = str(page.get("body", "") or "")
+    headings = page.get("headings", []) or []
+    headings_text = headings if isinstance(headings, str) else " ".join(headings)
+
+    if len(body) <= 3 * LANGUAGE_SAMPLE_CHARS:
+        body_parts = [body]
+    else:
+        middle_start = max(0, (len(body) // 2) - (LANGUAGE_SAMPLE_CHARS // 2))
+        body_parts = [
+            body[:LANGUAGE_SAMPLE_CHARS],
+            body[middle_start:middle_start + LANGUAGE_SAMPLE_CHARS],
+            body[-LANGUAGE_SAMPLE_CHARS:],
+        ]
+
+    return " ".join(
+        [str(page.get("title", "") or ""), headings_text, *body_parts]
+    )
+
+
+def _clearly_non_english_reason(page: dict) -> str | None:
+    """Return a reason only when a representative sample is clearly unsupported."""
+    sample = _balanced_language_sample(page)
+    letters = [character for character in sample if character.isalpha()]
+    if len(letters) < MIN_LANGUAGE_SAMPLE_LETTERS:
+        return None
+
+    non_latin_letters = sum(
+        "LATIN" not in unicodedata.name(character, "") for character in letters
+    )
+    non_latin_ratio = non_latin_letters / len(letters)
+    if non_latin_ratio >= NON_LATIN_LETTER_RATIO:
+        return f"non_latin_ratio={non_latin_ratio:.3f}"
+
+    try:
+        detected_languages = detect_langs(sample)
+    except Exception:
+        return None
+
+    if detected_languages:
+        strongest_language = detected_languages[0]
+        if (
+            strongest_language.lang in CLEARLY_UNSUPPORTED_LANGUAGES
+            and strongest_language.prob >= NON_ENGLISH_CONFIDENCE
+        ):
+            return (
+                f"detected={strongest_language.lang},"
+                f"confidence={strongest_language.prob:.3f}"
+            )
+    return None
+
+
 def _process_page(page: dict) -> dict:
     # Preprocess a single page's text fields.
+    language_filter_reason = _clearly_non_english_reason(page)
+    if language_filter_reason:
+        return {
+            "_language_filtered": True,
+            "url": (
+                page.get("canonical_url")
+                or page.get("fetched_url")
+                or page.get("url")
+                or ""
+            ),
+            "reason": language_filter_reason,
+        }
+
     title_tokens = preprocess(page.get("title", ""))
     heading_tokens = tokens_from_list(page.get("headings", []))
     body_tokens = preprocess(page.get("body", ""))
@@ -174,10 +257,21 @@ def create_preprocessed_pages(
     if parallel:
         num_workers = max(1, min(processes or cpu_count(), len(pages)))
         with Pool(processes=num_workers) as pool:
-            documents = pool.map(_process_page, pages)
+            processed_pages = pool.map(_process_page, pages)
     else:
         num_workers = 1
-        documents = [_process_page(page) for page in pages]
+        processed_pages = [_process_page(page) for page in pages]
+
+    language_filtered_pages = [
+        page for page in processed_pages if page.get("_language_filtered")
+    ]
+    documents = [
+        page for page in processed_pages if not page.get("_language_filtered")
+    ]
+    print(
+        f"language filter: removed {len(language_filtered_pages)} unsupported-language "
+        f"pages; kept {len(documents)}"
+    )
 
     total_body_tokens = sum(doc["body_length"] for doc in documents)
 
@@ -194,6 +288,13 @@ def create_preprocessed_pages(
         "elapsed_seconds": elapsed_seconds,
         "mode": mode,
         "num_workers": num_workers,
+        "language_filter": {
+            "removed_pages": len(language_filtered_pages),
+            "kept_pages": len(documents),
+            "non_english_confidence": NON_ENGLISH_CONFIDENCE,
+            "non_latin_letter_ratio": NON_LATIN_LETTER_RATIO,
+            "examples": language_filtered_pages[:20],
+        },
         "dedup": {
             "input_pages": dedup_report["input_pages"],
             "exact_duplicates_removed": dedup_report["exact_duplicates_removed"],
