@@ -113,6 +113,9 @@ that offer users supplementary information about the retrieved search results.
     \newpage
 
 \section{Preprocessing and Index Construction}
+      After crawling, the collected pages were preprocessed before building the search index. First, duplicate pages were removed, which reduced the dataset by about 30%. The text was then normalized by converting different spellings of Tübingen into a single representation. Afterwards, the text was tokenized, stopwords were removed, and stemming was applied to reduce words to their base forms.
+
+      To further improve the quality of the dataset, language detection was run again to discard documents that were not in English. Pages containing a high proportion of non-Latin characters were also removed. Finally, Unicode normalization was applied to ensure a consistent text representation before giving the data to the next step.
 
 \subsection{Shared preprocessing contract}
 
