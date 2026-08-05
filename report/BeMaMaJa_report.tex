@@ -224,6 +224,15 @@ where $Q$ is the query, $T$ represents the title tokens, and $H$ represents the 
 0.3 \cdot \mathrm{HeadingCoverage}
 \]
 
+\subsection{Domain diversification}
+To prevent the result list from being dominated by a single website, we added a soft
+domain-diversification step after reranking. The first result from each domain keeps
+its full score. Further results from the same domain are progressively penalized using
+a factor of $0.93$ per repetition. The penalty is limited to a minimum factor of $0.75$.
+We intentionally avoided a strict domain limit because several pages from the same
+website may still be highly relevant. This approach improves result variety while
+ensuring that relevant documents remain within the top 100 results used for evaluation.
+
 \subsection{Diagnostic evaluation}
 \begin{table}[h]
 \centering
@@ -242,14 +251,13 @@ BM25 + innovation & & & \\
 
 \section{Frontend and Hosting}
 
-\begin{center}
-\fbox{\parbox{0.94\linewidth}{\textbf{Frontend innovations.} A good search engine should not only return relevant links, but also help users understand and work with the results. We added several innovations, mainly focused on controllable AI summaries for individual pages and clear insight into why each result appears at its position.}}
-\end{center}
+\textbf{Frontend innovations.} A good search engine should not only return relevant links, but also help users understand and work with the results. We added several innovations, mainly focused on controllable AI summaries for individual pages and clear insight into why each result appears at its position.
 
-% \begin{center}
-% \fbox{\includegraphics[width=0.78\linewidth,height=62mm,keepaspectratio]{../output/pdf/assets/ui-explanation.png}}\\[3pt]
-% {\small\textbf{Figure 1.} Search interface with AI controls, result scores, and an expanded ranking explanation.}
-% \end{center}
+\begin{center}
+\includegraphics[height=55mm]{img/frontend.png}\hfill
+\includegraphics[height=55mm]{img/frontend-insights.png}\\[3pt]
+{\small\textbf{Figure 1.} Search interface with AI controls, result scores, and an expanded ranking explanation.}
+\end{center}
 
 \subsection{Interactive interface}
 
