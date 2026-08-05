@@ -251,22 +251,26 @@ BM25 + innovation & & & \\
 
 \section{Frontend and Hosting}
 
-\textbf{Frontend innovations.} A good search engine should not only return relevant links, but also help users understand and work with the results. We added several innovations, mainly focused on controllable AI summaries for individual pages and clear insight into why each result appears at its position.
+\textbf{Frontend innovations.} A good search engine should not only return relevant 
+links, but also help users understand and work with the results. This is why we 
+added several helpful innovations, mainly focused on controllable AI summaries for 
+individual pages and clear insight into why each result appears at its position.
 
 \begin{center}
 \includegraphics[height=55mm]{img/frontend.png}\hfill
 \includegraphics[height=55mm]{img/frontend-insights.png}\\[3pt]
-{\small\textbf{Figure 1.} Search interface with AI controls, result scores, and an expanded ranking explanation.}
+{\small\textbf{Figure 1.} Search interface showing spelling correction, Found and Not found query-term badges, and an AI-generated result summary (left), and the expanded ranking explanation with its score breakdown (right).}
 \end{center}
 
 \subsection{Interactive interface}
 
-\textbf{AI summaries.} Each result card offers an \emph{AI Summary} button backed by
+\textbf{AI summaries.} Each result card has an \emph{AI Summary} button backed by
 the Gemini API. \emph{Summary + relevance} connects the page summary to the query,
 \emph{Summary only} gives a neutral overview, and \emph{Custom focus} accepts a short
-prompt, for example about opening hours. A custom animation is shown during generation.
-Here, page content means the crawled body text from the raw-page data; it is used only
-for AI summaries, not for retrieval or ranking. When unavailable, the snippet is used,
+user prompt, for example about opening hours or entrance fees. A custom animation is 
+shown during AI generation. The summaries use cached page content, meaning the crawled
+body text from the raw-page data; this content is not used for retrieval or ranking.
+When unavailable, the snippet is used,
 and if the available text is too short, the page can be fetched live. If Gemini is
 unavailable or not configured, a local extractive summary is shown instead. Summaries
 are cached to avoid unnecessary API calls.
@@ -275,39 +279,40 @@ are cached to avoid unnecessary API calls.
 A \emph{Found} badge lists the exact matched query terms, while \emph{Not found} lists
 the remaining terms. Applied spelling corrections are shown above the results so users
 know which terms were used for retrieval. For further detail, the expandable
-\emph{Why this result?} view reports textual match evidence and a normalized breakdown
+\emph{Why this result?} view shows textual match evidence and a normalized breakdown
 of every active component: BM25, Field Boost, PRF, LinkScore, T\"ubingen relevance and
 foreign-location penalty.
 
 \textbf{Controls and fallback modes.} Users can select between 5 and 100 displayed
-results. The sidebar reports search time, index size, active ranking components, data
+results. The sidebar shows search time, index size, active ranking components, data
 source (Supabase or local), Gemini status (ready or not configured), and page-content
-loading progress (crawled body text for AI summaries). The
-required batch file can be uploaded there and is returned as a downloadable
-\texttt{results.tsv} after validation and retrieval. Runtime data normally comes from
-a private Supabase bucket. Starting with \texttt{--local} disables remote access, and
+loading progress (crawled body text for AI summaries). The interface accepts batch-file
+uploads and returns the retrieved results as a downloadable \texttt{results.tsv}. Runtime
+data normally comes from
+a private Supabase bucket. Starting with \texttt{--local} disables Supabase, and
 local index files provide a fallback if Supabase cannot be used. These options keep the
-service stable: if one feature or external service fails, the rest of the search
+service reliable: if one feature or external service fails, the rest of the search
 continues to work so the user notices as little of the failure as possible.
 
 \subsection{Hosting and resource management}
 
 When a user opens the hosted version, DuckDNS resolves the domain to the public IP of
 the Oracle VM. Nginx, the reverse proxy, forwards the browser request to Streamlit on
-the same VM. Streamlit serves the interface and performs retrieval using the in-memory
-index. It downloads the compressed index and raw-page shards from Supabase Storage and
-sends summary requests to Gemini. The API key remains securely on our server; running
-locally requires a separate key.
+the same VM. At startup, Streamlit downloads the compressed index and raw-page shards
+from Supabase Storage, caches the index in RAM, and loads raw-page content gradually
+for AI summaries. It reuses the cached index for retrieval and sends summary requests
+to Gemini. The API key stays on the server; local use requires a separate key.
 
 \textbf{Index caching.} Caching the loaded index was our largest runtime improvement:
 it remains in RAM across Streamlit reruns and is reused for all searches. This reduced
 search times from about ten seconds to usually below one second.
 
-\textbf{Startup memory.} Separately, as the index and raw pages grew, combining downloaded
-shards in RAM caused a large startup peak. They are now streamed into a disk cache first,
-while raw pages are processed gradually and only document IDs and body text needed for
-summaries are retained. This lowers peak RAM, makes search available earlier, and
-improves scalability without keeping unnecessary page data in memory.
+\textbf{Startup memory.} As the data grew, combining downloaded shards in RAM caused a
+large startup peak. To avoid this, downloaded shards are streamed to a disk cache instead
+of being combined in RAM. The index is then loaded into RAM and cached, so users can search
+as soon as it is ready. Page content, which is only needed for AI summaries, is processed
+gradually in the background. Loading all raw pages therefore takes longer, but this avoids
+the RAM peak and improves scalability.
 
 \newpage
 \begin{thebibliography}{9}
