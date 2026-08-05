@@ -161,39 +161,65 @@ BM25 + innovation & & & \\
 
 \newpage
 
-\section{Interface and Evaluation}
+\section{Frontend and Hosting}
 
-\begin{minipage}[t]{0.49\linewidth}
-\centering
-\fbox{\parbox[c][42mm][c]{0.92\linewidth}{}}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.49\linewidth}
-\centering
-\fbox{\parbox[c][42mm][c]{0.92\linewidth}{}}
-\end{minipage}
 \begin{center}
-{\small\textbf{Figure 1.}}
+\fbox{\parbox{0.94\linewidth}{\textbf{Frontend innovations.} A good search engine should not only return relevant links, but also help users understand and work with the results. We added several innovations, mainly focused on controllable AI summaries for individual pages and clear insight into why each result appears at its position.}}
+\end{center}
+
+\begin{center}
+\fbox{\includegraphics[width=0.78\linewidth,height=62mm,keepaspectratio]{../output/pdf/assets/ui-explanation.png}}\\[3pt]
+{\small\textbf{Figure 1.} Search interface with AI controls, result scores, and an expanded ranking explanation.}
 \end{center}
 
 \subsection{Interactive interface}
 
-\subsection{Batch and effectiveness evaluation}
+\textbf{AI summaries.} Each result card offers an \emph{AI Summary} button backed by
+the Gemini API. \emph{Summary + relevance} connects the page summary to the query,
+\emph{Summary only} gives a neutral overview, and \emph{Custom focus} accepts a short
+prompt, for example about opening hours. A custom animation is shown during generation.
+Here, page content means the crawled body text from the raw-page data; it is used only
+for AI summaries, not for retrieval or ranking. When unavailable, the snippet is used,
+and if the available text is too short, the page can be fetched live. If Gemini is
+unavailable or not configured, a local extractive summary is shown instead. Summaries
+are cached to avoid unnecessary API calls.
 
-\begin{table}[h]
-\centering
-\caption{Final evaluation checklist.}
-\begin{tabularx}{0.9\linewidth}{@{}X X@{}}
-\toprule
-Requirement & Evidence \\
-\midrule
-Five queries, 100 URLs each & \\
-Average / maximum runtime & \\
-Final mean nDCG & \\
-Repository branch frozen & \\
-\bottomrule
-\end{tabularx}
-\end{table}
+\textbf{Explainable ranking.} Each result card directly shows its final ranking score.
+A \emph{Found} badge lists the exact matched query terms, while \emph{Not found} lists
+the remaining terms. Applied spelling corrections are shown above the results so users
+know which terms were used for retrieval. For further detail, the expandable
+\emph{Why this result?} view reports textual match evidence and a normalized breakdown
+of every active component: BM25, Field Boost, PRF, LinkScore, T\"ubingen relevance and
+foreign-location penalty.
 
-\subsection{Limitations and reproducibility}
+\textbf{Controls and fallback modes.} Users can select between 5 and 100 displayed
+results. The sidebar reports search time, index size, active ranking components, data
+source (Supabase or local), Gemini status (ready or not configured), and page-content
+loading progress (crawled body text for AI summaries). The
+required batch file can be uploaded there and is returned as a downloadable
+\texttt{results.tsv} after validation and retrieval. Runtime data normally comes from
+a private Supabase bucket. Starting with \texttt{--local} disables remote access, and
+local index files provide a fallback if Supabase cannot be used. These options keep the
+service stable: if one feature or external service fails, the rest of the search
+continues to work so the user notices as little of the failure as possible.
+
+\subsection{Hosting and resource management}
+
+When a user opens the hosted version, DuckDNS resolves the domain to the public IP of
+the Oracle VM. Nginx, the reverse proxy, forwards the browser request to Streamlit on
+the same VM. Streamlit serves the interface and performs retrieval using the in-memory
+index. It downloads the compressed index and raw-page shards from Supabase Storage and
+sends summary requests to Gemini. The API key remains securely on our server; running
+locally requires a separate key.
+
+\textbf{Index caching.} Caching the loaded index was our largest runtime improvement:
+it remains in RAM across Streamlit reruns and is reused for all searches. This reduced
+search times from about ten seconds to usually below one second.
+
+\textbf{Startup memory.} Separately, as the index and raw pages grew, combining downloaded
+shards in RAM caused a large startup peak. They are now streamed into a disk cache first,
+while raw pages are processed gradually and only document IDs and body text needed for
+summaries are retained. This lowers peak RAM, makes search available earlier, and
+improves scalability without keeping unnecessary page data in memory.
 
 \end{document}
