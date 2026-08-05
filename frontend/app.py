@@ -42,6 +42,8 @@ SCORE_LABELS = [
     ("Field Boost", "normalized_field_boost"),
     ("PRF", "normalized_prf"),
     ("LinkScore", "normalized_link"),
+    ("Tübingen relevance", "normalized_tuebingen"),
+    ("Foreign-location penalty", "normalized_foreign_location_penalty"),
     ("LSA", "normalized_lsa"),
 ]
 
@@ -570,6 +572,21 @@ def why_reasons(result: dict, doc: dict, query_tokens: list[str], prf_terms: lis
         reasons.append("Boosted by PRF terms: " + ", ".join(prf_terms[:5]))
     if score_details.get("normalized_link", 0) > 0:
         reasons.append("Internal LinkScore contributed")
+    tuebingen_score = score_details.get("normalized_tuebingen", 0)
+    if tuebingen_score > 0:
+        if tuebingen_score >= 1.0:
+            evidence = "title"
+        elif tuebingen_score >= 0.8:
+            evidence = "headings"
+        else:
+            evidence = "URL"
+        reasons.append(f"Tübingen relevance contributed through the {evidence}")
+    location_penalty = score_details.get("normalized_foreign_location_penalty", 0)
+    if location_penalty > 0:
+        evidence = "title" if location_penalty >= 1.0 else "headings"
+        reasons.append(
+            f"Foreign-location penalty applied: non-Tübingen location in the {evidence}"
+        )
     if score_details.get("normalized_lsa", 0) > 0:
         reasons.append("Semantic LSA similarity contributed")
 
