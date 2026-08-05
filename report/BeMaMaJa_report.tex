@@ -187,12 +187,14 @@ thus the search results are also identical.
 After this, the BM25 score is computed, and the result is then used by the reranking algorithm.
 
 \subsection{Second-stage innovation}
-The first improvement is adding field boosts to the score. The field boost increases the score when query terms appear in the title or the headings,
-since this indicates that the query terms are relevant to the given document. The values are normalized by the number of Queries in order to prevent
-the score to increase because of repeating terms.
-After computing the field boost for both fields, the two values are combined using a $7:3$ ratio,
-since the title is more important than the headings. For the computation, the following formulas are used,
-where $Q$ is the query, $T$ represents the title tokens, and $H$ represents the heading tokens.
+As second-stage innovations, we use multiple signals to rerank our results.
+The final score is a weighted sum of all these components. 
+($0.60$ BM25, $0.20$ Field Boost, $0.10$ Link Score, $0.05$ PRF, $0.05$ Tuebingen Centrality, $-0.10$ Location Penalty)
+
+\textbf{Field Boost} increases the score when query terms appear in the title or the headings. 
+Matches in these fields are generally stronger relevance indicators than occurrences in the body.
+For the computation, the following formulas are used,
+where $Q$ is the query tokens, $T$ represents the title tokens, and $H$ represents the heading tokens.
 \[
 \mathrm{TitleCoverage} =
 \frac{|Q \cap T|}{|Q|}
@@ -208,19 +210,22 @@ where $Q$ is the query, $T$ represents the title tokens, and $H$ represents the 
 0.3 \cdot \mathrm{HeadingCoverage}
 \]
 
-\subsection{Diagnostic evaluation}
-\begin{table}[h]
-\centering
-\caption{Ablation or diagnostic comparison.}
-\begin{tabularx}{0.92\linewidth}{@{}X c c X@{}}
-\toprule
-Configuration & Query 1 & Query 2 & Interpretation \\
-\midrule
-BM25 only & & & \\
-BM25 + innovation & & & \\
-\bottomrule
-\end{tabularx}
-\end{table}
+\textbf{PRF} is performed by taking the first 30 BM25 candidates. 
+Only the strongest from each domain is considered. Up to 5 documents are selected.
+From these 5 terms are collected from their titles and headings.
+Query terms, generic terms and terms that are too rare or too frequent in the corpus are removed.
+At most three expansilon terms are retained.
+
+\textbf{Link Score} represents the authority of a document within the crawled collection. 
+It is defined as the number of indexed documents that link to the candidate.
+
+\textbf{Tübingen Centrality} measures how strongly a document is focused on Tübingen. 
+It is based on the occurrence of the normalized "tubingen" term in important document fields.
+
+\textbf{Foreign Location Penalty} The Foreign Location Penalty reduces the score of documents that appear to focus on another city, such as Stuttgart, Munich, Heidelberg, or Freiburg.
+The penalty depends on where the foreign location occurs. Stronger penalties for title, then headings and URL.
+
+
 
 \newpage
 
