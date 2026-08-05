@@ -12,10 +12,6 @@ except ImportError:
         return text.lower().split()
 
 def compute_idf(N, df):
-    """
-    Berechnet den Okapi BM25 IDF-Wert.
-    Das '+ 1.0' im Logarithmus verhindert negative IDF-Werte bei sehr häufigen Termen.
-    """
     return math.log(1.0 + (N - df + 0.5) / (df + 0.5))
 
 _CACHE = {}
@@ -28,17 +24,14 @@ CONTROLLED_QUERY_EXPANSIONS = {
     "attract": {"castl", "museum", "sightse"},
 }
 
+# loads the index and bulids the lookups and the corection buckets
+# uses Caching for Speedup 
 def _get_prepared_index(index):
-    """
-    Lädt den Index und baut alle Lookups und die Rechtschreib-Buckets.
-    Nutzt Caching für Speed-up.
-    """
     cache_key = index if isinstance(index, str) else id(index)
     
     if cache_key in _CACHE:
         return _CACHE[cache_key]
 
-    # nur einmal json laden für speedup
     if isinstance(index, str):
         with open(index, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
@@ -48,8 +41,7 @@ def _get_prepared_index(index):
     documents = index_data.get("documents", [])
     frequencies = index_data.get("document_frequencies", {})
     
-    # BM25 term frequencies contain title, heading and body tokens. Use the
-    # matching total field length so those extra fields are normalized too.
+    # loading BM25 relevant information
     field_lengths = index_data.get("field_lengths", {})
     body_lengths = field_lengths.get("body", {})
     title_lengths = field_lengths.get("title", {})
@@ -71,17 +63,16 @@ def _get_prepared_index(index):
     )
     doc_metadata = {doc["doc_id"]: doc for doc in documents}
 
-    # Rechtschreib-Buckets vorbauen (Anfangsbuchstabe und Länge)
+    # building the buckets for the spelling corection
     spelling_buckets = defaultdict(list)
     for term, freq in frequencies.items():
         if term:
             spelling_buckets[(term[0], len(term))].append((term, freq))
             
-    # Für schnelles Tie-Breaking direkt nach Häufigkeit absteigend sortieren
+    # sorting by frequency for the tie breaker
     for key in spelling_buckets:
         spelling_buckets[key].sort(key=lambda x: x[1], reverse=True)
 
-    # Im Cache speichern
     prepared_data = (
         index_data,
         doc_lengths,
@@ -91,12 +82,12 @@ def _get_prepared_index(index):
         average_document_length,
     )
     _CACHE[cache_key] = prepared_data
-    _CACHE[id(index_data)] = prepared_data  # Verhindert Cache-Miss
+    _CACHE[id(index_data)] = prepared_data
     
     return prepared_data
 
+# computing the edit distance and reject candidates who need too many changes to be a valid word
 def _bounded_edit_distance(source: str, target: str, max_distance: int) -> int:
-    """Reject impossible candidates, otherwise use NLTK's exact distance."""
     if abs(len(source) - len(target)) > max_distance:
         return max_distance + 1
 
@@ -108,18 +99,15 @@ def _bounded_edit_distance(source: str, target: str, max_distance: int) -> int:
 
     return nltk.edit_distance(source, target, transpositions=True)
 
-
+# corecting the spelling of the query
 def _correct_query_spelling_uncached(query_tokens: list[str], index_data: dict, max_distance: int = 2) -> list[str]:
-    """
-    Rechtschreibkorrektur mit O(1)-Bucket-Lookups und Frequenz-Tie-Breaking.
-    """
-    # Holt sich buckets aus dem Cache
+    # loading from the cach
     _, _, _, frequencies, spelling_buckets, _ = _get_prepared_index(index_data)
     
     corrected_tokens = []
 
     for token in query_tokens:
-        # O(1) Hash-Lookup für existierende oder kurze Wörter
+        # Hash-Lookup for "corect" words
         if token in frequencies or token == "tubingen" or token.isdigit() or len(token) <= 3:
             corrected_tokens.append(token)
             continue
@@ -128,7 +116,7 @@ def _correct_query_spelling_uncached(query_tokens: list[str], index_data: dict, 
         t_len = len(token)
         t_char = token[0]
 
-        # Nur realistische Kandidaten
+        # using the buckets for speedup
         candidates = []
         for length_diff in range(-allowed_distance, allowed_distance + 1):
             bucket = spelling_buckets.get((t_char, t_len + length_diff), [])
@@ -138,7 +126,7 @@ def _correct_query_spelling_uncached(query_tokens: list[str], index_data: dict, 
             corrected_tokens.append(token)
             continue
 
-        # Levenshtein auf reduzierte anzahl
+        # Edit Levenshtein distance
         best_term = None
         min_dist = allowed_distance + 1
         best_freq = -1
@@ -155,8 +143,7 @@ def _correct_query_spelling_uncached(query_tokens: list[str], index_data: dict, 
                 best_freq = freq
 
         if best_term and min_dist <= allowed_distance:
-            # Canonicalize corrected terms with the same stemming pipeline used
-            # for normal queries, so e.g. attractionu -> attraction -> attract.
+            #  stemming after the spelling corection
             normalized_term = preprocess(best_term)
             if len(normalized_term) == 1 and normalized_term[0] in frequencies:
                 best_term = normalized_term[0]
@@ -166,19 +153,17 @@ def _correct_query_spelling_uncached(query_tokens: list[str], index_data: dict, 
 
     return corrected_tokens
 
-
+# using cache to store corrections
 @lru_cache(maxsize=10_000)
 def _correct_spelling_token(index_cache_key: int, token: str, max_distance: int) -> str:
-    """Cache corrections across repeated queries and Streamlit reruns."""
     prepared_index = _CACHE.get(index_cache_key)
     if prepared_index is None:
         return token
     index_data = prepared_index[0]
     return _correct_query_spelling_uncached([token], index_data, max_distance)[0]
 
-
+# correcting based on previous corrected queries
 def correct_query_spelling(query_tokens: list[str], index_data: dict, max_distance: int = 2) -> list[str]:
-    """Correct query tokens while reusing earlier token-level results."""
     _get_prepared_index(index_data)
     index_cache_key = id(index_data)
     return [
@@ -223,19 +208,9 @@ def get_controlled_expansion_field_tokens(document: dict) -> set[str]:
     )
     return title_tokens | heading_tokens if is_tuebingen_central else set()
 
-
+# basic retrival using BM25
 def retrieve(query, index, top_k=1000, k1=1.2, b=0.75, assume_tuebingen_context=True):
-    """
-    First-Stage-Retrieval mit dem BM25-Algorithmus.
-    
-    :param query: Der Suchstring des Nutzers (str)
-    :param index: Pfad zur 'data/index.json' (str) oder bereits geladenes Dictionary
-    :param top_k: Anzahl der zurückzugebenden Dokumente (Standard: 100)
-    :param k1: BM25 Term-Sättigungsparameter (Standard: 1.2)
-    :param b: BM25 Längennormalisierungsparameter (Standard: 0.75)
-    :return: Ein Dictionary mit Query-Infos und den Top-100-Kandidaten
-    """
-    # nutzt den cach für schnelleres laden
+    # using the cache
     (
         index_data,
         doc_lengths,
@@ -270,7 +245,7 @@ def retrieve(query, index, top_k=1000, k1=1.2, b=0.75, assume_tuebingen_context=
     for token in controlled_expansion_terms:
         weighted_query_terms[token] = CONTROLLED_EXPANSION_WEIGHT
 
-    # BM25 Scoring (Term-at-a-Time Ansatz)
+    # BM25 Scoring
     scores = defaultdict(float)
     matched_terms_per_doc = defaultdict(list)
     matched_expansion_terms_per_doc = defaultdict(list)
@@ -280,15 +255,13 @@ def retrieve(query, index, top_k=1000, k1=1.2, b=0.75, assume_tuebingen_context=
         if token not in inverted_index:
             continue
             
-        # IDF für den aktuellen Query-Term berechnen
+        # IDF
         df = doc_frequencies.get(token, len(inverted_index[token]))
         idf = compute_idf(N, df)
-        # Explicit Tuebingen keeps the existing boost. Automatically added
-        # Tuebingen remains a normal context term with factor 1.0.
+        # boost if tuebingen is part of the querry
         if token == TUEBINGEN_CONTEXT_TOKEN and tuebingen_is_explicit:
             idf *= 2.0
         
-        # Posting-Liste ablaufen
         for posting in inverted_index[token]:
             doc_id = posting["doc_id"]
             if token in controlled_expansion_term_set:
@@ -301,7 +274,7 @@ def retrieve(query, index, top_k=1000, k1=1.2, b=0.75, assume_tuebingen_context=
             tf = posting["tf"]
             doc_len = doc_lengths.get(doc_id, avgdl)
             
-            # BM25 Formel anwenden
+            # BM25 Formula
             numerator = tf * (k1 + 1.0)
             denominator = tf + k1 * (1.0 - b + b * (doc_len / avgdl))
             score_contribution = query_weight * idf * (numerator / denominator)
@@ -312,10 +285,10 @@ def retrieve(query, index, top_k=1000, k1=1.2, b=0.75, assume_tuebingen_context=
             else:
                 matched_terms_per_doc[doc_id].append(token)
 
-    # Dokumente nach Score absteigend sortieren und Top-K auswählen
+    # sorting and getting the top k
     ranked_doc_ids = sorted(scores.keys(), key=lambda d: scores[d], reverse=True)[:top_k]
 
-    # Ergebnis im geforderten JSON-Format aufbereiten
+    # formating for the correct json file
     candidates = []
     for doc_id in ranked_doc_ids:
         meta = doc_metadata.get(doc_id, {})
