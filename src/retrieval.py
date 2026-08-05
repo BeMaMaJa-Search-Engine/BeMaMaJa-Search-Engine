@@ -155,6 +155,11 @@ def _correct_query_spelling_uncached(query_tokens: list[str], index_data: dict, 
                 best_freq = freq
 
         if best_term and min_dist <= allowed_distance:
+            # Canonicalize corrected terms with the same stemming pipeline used
+            # for normal queries, so e.g. attractionu -> attraction -> attract.
+            normalized_term = preprocess(best_term)
+            if len(normalized_term) == 1 and normalized_term[0] in frequencies:
+                best_term = normalized_term[0]
             corrected_tokens.append(best_term)
         else:
             corrected_tokens.append(token)
