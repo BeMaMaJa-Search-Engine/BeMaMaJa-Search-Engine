@@ -41,13 +41,13 @@
 \end{center}
 
 \begin{abstract}
-  This project presents the implementation of a search engine from scratch. It starts by implementing a web crawler that uses a given seed set to retrieve web pages.
-To avoid crawling undesirable websites, a blacklist is used, and the crawler respects the robots.txt protocol. To improve performance, the crawler employs multiprocessing.
+  This project presents a search engine built from scratch for English-language web pages related to T\"ubingen. It starts with a web crawler that uses a given seed set to retrieve web pages.
+To avoid crawling undesirable websites, a blacklist is used, and the crawler respects the robots.txt protocol. To improve performance, the crawler uses multiple worker threads.
 For indexing, the retrieved pages are tokenized, stop words are removed, and the remaining words are stemmed before constructing the inverted index.
 The retrieval stage is based on the BM25 algorithm with an integrated spelling correction mechanism. For re-ranking,
-we apply field boosts, link counts and PRF and combine them with the BM25 score.
-The frontend features a clean and modern user interface. Additionally, it provides AI-powered features
-that offer users supplementary information about the retrieved search results.
+we combine the BM25 score with field boosts, link counts, PRF, location-aware ranking signals and soft domain diversification.
+The frontend provides a modern interface with controllable AI-generated page summaries,
+explainable ranking signals and direct batch-file upload.
 \end{abstract}
 
 \section{Data Collection and Crawling}
