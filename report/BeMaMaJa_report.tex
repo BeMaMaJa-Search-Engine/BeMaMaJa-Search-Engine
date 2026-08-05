@@ -43,96 +43,106 @@
 \begin{abstract}
   This project presents a search engine built from scratch for English-language web pages related to T\"ubingen. It starts with a web crawler that uses a given seed set to retrieve web pages.
 To avoid crawling undesirable websites, a blacklist is used, and the crawler respects the robots.txt protocol. To improve performance, the crawler uses multiple worker threads.
-For indexing, the retrieved pages are tokenized, stop words are removed, and the remaining words are stemmed before constructing the inverted index.
+For indexing, the retrieved pages are tokenized, stopwords are removed, and the remaining words are stemmed before constructing the inverted index.
 The retrieval stage is based on the BM25 algorithm with an integrated spelling correction mechanism. For re-ranking,
-we combine the BM25 score with field boosts, link counts, PRF, location-aware ranking signals and soft domain diversification.
+we combine the BM25 score with field boosts, link counts, PRF, location-aware ranking signals, and soft domain diversification.
 The frontend provides a modern interface with controllable AI-generated page summaries,
 explainable ranking signals and direct batch-file upload.
 \end{abstract}
 
 \section{Data Collection and Crawling}
-    
   \subsection{Corpus scope and seeds}
-    The scope of our project is to build a search engine that indexes English-language websites related to Tübingen. To create an initial set of seed URLs for the crawler, we first collected a list of around 50 keywords that represent different topics connected to the city. These keywords included areas such as attractions, the university, student life, hospitals, culture, and other relevant subjects. It was important to choose keywords that cover a wide range of topics so that the resulting corpus is as diverse as possible.
-    
-    For each keyword, we searched Google using the query ``Tübingen + keyword'' and manually recorded the first 10 search results. After collecting all URLs, duplicate links were removed. Starting from around 50 keywords, this process resulted in a final seed list containing 449 unique URLs, which served as the starting point for our crawler.
+  Our corpus contains English-language websites related to Tübingen. For the initial seed
+  set, we selected around 50 keywords covering attractions, the university, student life,
+  hospitals, culture, and other city topics. For each keyword, we searched Google for
+  ``Tübingen + keyword'' and manually recorded the first ten results. Removing duplicate
+  URLs left 449 unique seeds. We then added \href{https://scells.me/}{https://scells.me/}
+  manually, bringing the final seed set to 450 URLs. The broad range of keywords was intended
+  to produce a diverse corpus rather than focusing only on the most common tourist pages.
 
-    We had one manual adjustment of the seed list and put \href{https://scells.me/}{https://scells.me/} into it manually, bringing our total to 450.
-      
   \subsection{Crawler design}
-    During development, we implemented four different crawler versions. To evaluate them, each version was allowed to run for about 15 hours under the same conditions. Based on the results, we selected the best-performing version for our final large-scale crawl. Since the results chapter compares these versions, we briefly describe each of them here.
-    
-    Version 1 followed the crawler architecture introduced in the lecture. It used a prioritized frontier to decide which URLs to visit next and respected website politeness by enforcing crawl delays and setting a custom user agent. Instead of relying on the language information provided by websites, we used the \texttt{langdetect} Python library to ensure that only English pages were crawled. The crawler also respected \texttt{robots.txt} files by avoiding blocked paths, following crawl delays, and caching each \texttt{robots.txt} file to avoid downloading it repeatedly. Duplicate content was not removed during crawling but later during preprocessing, meaning that the crawler temporarily stored a larger \texttt{raw\_pages.json} file in exchange for faster crawling. To improve crawling speed, the crawler used multiple worker threads.
-    
-    Version 2 was based on Version 1 but improved the detection of Tübingen-related pages. Instead of a simple regular expression, it used a larger regular expression that also matched common spelling variations and OCR-like errors, such as ``Tueeebingen'' or ``t123bingen''. The idea was to identify more relevant pages even if the city name was written incorrectly or if stylistic choices of the author changed the spelling of Tübingen (such as in a blog post).
-    
-    Version 3 focused mainly on improving performance. While testing Version 1, we noticed that sorting the prioritized frontier became increasingly expensive as it grew larger. Since the main thread was responsible for maintaining the sorted frontier, it often blocked the worker threads while performing these operations. We therefore tried a different approach. Instead of one globally prioritized frontier, we split it into two frontiers: a high-priority frontier containing links extracted from pages that were related to Tübingen, and a low-priority frontier containing links from unrelated pages.
-    
-    The frontier itself was also redesigned. Instead of storing every URL in one large data structure, it became a list of domain objects. Each object contained a queue of URLs for a single domain together with information such as the last access time to enforce politeness delays. To select the next URL, the crawler randomly chose a domain that was ready to be visited and then processed the next URL from that domain. This naturally prevented the crawler from spending most of its time on very large websites. For example, even if the University of Tübingen website contained thousands of links while another domain only contained a handful, both domains had an equal chance of being selected.
-    
-    This design comes with clear trade-offs. The main advantage is performance. Even with millions of URLs in the frontier, selecting the next domain depends only on the number of unique domains rather than the total number of URLs. Operations within each domain queue are also very efficient, allowing the main thread to spend much less time managing the frontier and more time supplying work to the worker threads. The downside is that we lose fine-grained prioritization within a domain. Once a domain is selected, URLs are processed in the order they were discovered instead of globally prioritizing the most relevant URL. This means that a URL containing the word ``Tübingen'' might be processed after less relevant URLs from the same website. Although this is a disadvantage, the large performance improvement outweighed the loss of prioritization. In our experiments, Version 3 crawled roughly four to five times as many pages as Versions 1 and 2 during the same 15-hour runtime.
-    
-    Version 4 built directly on the ideas from Version 3 and introduced two different types of worker threads called Horses and Explorers. Horses behaved exactly as before by selecting a random domain that was ready to be crawled and processing its next URL. Explorers, on the other hand, searched for ready domains with only a small number of remaining URLs and processed those first. Since the Horses would eventually reach these smaller domains anyway, this change was not expected to have a large effect on the overall crawl. Instead, the Explorers were intended to discover new domains slightly earlier and improve exploration of the web.
+  We implemented four crawler versions and evaluated each for about 15 hours under the same
+  conditions before selecting the best-performing version for the final crawl. Version 1 followed
+  the architecture from the lecture. It used a prioritized frontier, crawl delays, a custom user
+  agent, and multiple worker threads. It also respected blocked paths and crawl delays from
+  \texttt{robots.txt}, while caching each file to avoid repeated downloads. We used
+  \texttt{langdetect} instead of website-provided language metadata. Duplicate content was kept
+  during crawling and removed during preprocessing. This increased the size of
+  \texttt{raw\_pages.json} but avoided slowing down the crawler.
 
-    A blacklist for domains was also implemented, containing \href{https://archive.org}{https://archive.org}.
-  
+  Version 2 retained this design but expanded the regular expression for Tübingen-related
+  pages to cover spelling variations and OCR-like errors such as ``Tueeebingen'' and
+  ``t123bingen''. This allowed relevant pages to be detected even when the city name was
+  misspelled or written in an unusual style.
+
+  Version 3 addressed the increasing cost of sorting a large global frontier, which often blocked
+  the worker threads. It split links into a high-priority frontier for links from Tübingen-related
+  pages and a low-priority frontier for links from unrelated pages. Instead of one large URL data
+  structure, each frontier stored domain objects with a queue of URLs and the last access time.
+  The crawler randomly selected a ready domain and processed its next URL in discovery order.
+  Ready domains had an equal chance of being selected regardless of queue size, so a large website
+  with thousands of links could not dominate a smaller domain. Selection depended on the number
+  of domains rather than the total number of URLs, which kept frontier operations efficient even
+  when millions of links were stored. This also allowed the main thread to spend less time managing
+  the frontier and more time supplying work to the workers. The trade-off was losing fine-grained
+  prioritization within a domain: a URL containing ``Tübingen'' could be processed after less
+  relevant URLs from the same website. However, Version 3 still crawled roughly four to five times
+  as many pages as Versions 1 and 2.
+
+  Version 4 added two worker types. Horses selected a random ready domain as before, while
+  Explorers preferred ready domains with only a few URLs left. Since Horses would eventually
+  reach these domains as well, this was expected to have little effect on overall throughput.
+  Its purpose was to discover new domains slightly earlier and improve exploration. We also
+  maintained a domain blacklist containing \href{https://archive.org}{https://archive.org}.
+
   \subsection{Results}
+  We evaluated the crawlers with \textit{scripts/crawler\_analysis.py}. After about ten hours,
+  Versions 1 and 2 still found the most unique domains, whereas the later versions achieved
+  almost four times the page throughput. Comparing Versions 2 and 4, Version 4 collected about
+  3.57 times as many pages while finding about 4\% fewer domains. We accepted this trade-off,
+  especially because the globally sorted frontier of Versions 1 and 2 became slower as it grew.
 
-    We wrote ourselves some tools to analyse our crawlers. These tools can be found in \textit{scripts/crawler\_analysis.py}. These are a few stats aswell as figures.
+  \begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrrrr}
+      \toprule
+      \textbf{Crawler} & \textbf{Runtime (min)} & \textbf{Domains} & \textbf{Raw pages} & \textbf{Pages/min} \\
+      \midrule
+      Base (V1, blue) & 632 & 471 & 5187 & 8.21 \\
+      Regex (V2, orange) & 583 & 484 & 5201 & 8.92 \\
+      Harsh Frontier (V3, red) & 635 & 416 & 20001 & 31.50 \\
+      Horses \& Explorers (V4, purple) & 628 & 452 & 20000 & 31.85 \\
+      \bottomrule
+    \end{tabular}
+    \caption{Crawler version comparison after about ten hours.}
+  \end{table}
 
-    The following table shows the general performance of a crawler-version after about 10 hours of runtime. Impressively enough the number of unique domains of the base version and regex version (both using the single frontier+prioritization) cannot be matched by any of the coming crawler versions. On the other side, the effective throughput of new pages is nearly 4x the first version of our crawler.
-
-    A fair comparrison between V2 and V4 shows, that we gain about 3.57x the amount of pages while loosing about 4\% of unique domains. A tradeoff we decided to go with. (WHich is also not taking into account that the more links are in our frontier the slower the V1 and V2 crawlers will become).
-      
-      \begin{table}[H]
-        \centering
-        \begin{tabular}{c|c|c|c|c}
-              \textbf{Crawler} & \textbf{Runtime (minutes)} & \textbf{\# domains} & \textbf{\# raw pages} & \textbf{Pages per minute} \\ \hline
-              Base (V1) (blue) & 632 & 471 & 5187 & 8.21 \\
-              Regex (V2) (orange) & 583 & 484 & 5201 & 8.92 \\
-              Harsh Frontier (V3) (red) & 635 & 416 & 20001 & 31.5 \\
-              Horses \& Explorers (V4) (purple) & 628 & 452 & 20000 & 31.85
-        \end{tabular}
-        \caption{Crawler Version comparison on the metrics of number of raw pages and number of unique domains.}
-      \end{table}
-      
-      \begin{figure}[H]
-        \centering
-        \includegraphics[width=0.9\linewidth]{img/mse_crawler_1.png}
-        \caption{Average time between finding new pages with a window of 50 to smooth the curve. (Lower is better)}
-      \end{figure}
-
-      \begin{figure}[H]
-        \centering
-        \includegraphics[width=0.9\linewidth]{img/mse_crawler_2.png}
-        \caption{Time between discovering new domains with a sliding window of 50 to smooth the curve. (Lower is better) \\ Also visible here is the total amount of domains found.}
-      \end{figure}
-
-      Letting the crawler run for 43h16m14s resulted in a total of 75000 raw pages (reminder that there will be duplicates in here, this step is still done in preprocessing) from a total of TODO unique domains.
-    
-    \newpage
+  \begin{figure}[H]
+    \centering
+    \includegraphics[height=40mm]{img/mse_crawler_1.png}\hfill
+    \includegraphics[height=40mm]{img/mse_crawler_2.png}
+    \caption{Crawler analysis using a sliding window of 50: average time between finding new pages (left), and time between discovering new domains with the total number of domains found (right). Lower is better.}
+  \end{figure}
 
 \section{Preprocessing and Index Construction}
-After crawling, the collected pages were preprocessed before building the search index. 
-First, exact and near-duplicate pages were removed, reducing the original dataset by approximately
-30\%. The remaining pages were filtered for clearly non-English content using language detection
-and a separate check for pages in which at least 25\% of the alphabetic characters were non-Latin.
-Title, headings, and body were then processed separately. The text was lowercased, Unicode accents
-were normalized, and different spellings of Tübingen were mapped to a common representation. 
-Finally, the text was tokenized, stopwords were removed, and Porter stemming was applied. 
-The same text-processing pipeline is also used for queries.
+After crawling, exact and near-duplicate pages were removed, reducing the dataset by approximately
+30\%. Clearly non-English pages were filtered using language detection and a separate check for
+pages in which at least 25\% of the alphabetic characters were non-Latin. Title, headings, and body
+were processed separately. The text was lowercased, Unicode accents and different spellings of
+  Tübingen were normalized, and it was then tokenized. Finally, stopwords were removed and Porter
+stemming was applied. Queries use the same preprocessing pipeline.
 
-In the next step, the inverted index is constructed. In addition to the index itself, 
-statistics such as document frequencies, field lengths, and the average document length are 
-calculated and stored. Furthermore, an internal link graph is built to support link-based 
-re-ranking in later stages.
+The processed documents were used to construct the inverted index. We also stored document
+frequencies, field lengths, and the average document length. An internal link graph was built to
+support link-based re-ranking in later stages.
 
 \section{Retrieval and Re-ranking}
 
 \subsection{Manual BM25 first stage}
-BM25 is used as the first-stage ranking as it is a standard algorithm in practice.
+BM25 is used for first-stage ranking because it is a standard algorithm in practice.
 It computes the Inverse Document Frequency (IDF) to give rare words a higher value.
-Since the search engine is T\"ubingen based the IDF for T\"ubingen is boosted by the factor $2$.
+Since the search engine is T\"ubingen-based, the IDF for T\"ubingen is boosted by a factor of $2$.
 The Term Frequency (TF) is used to give words that appear more often a higher value. 
 The final BM25 score is obtained by summing the contribution of each query term.
 The parameter $b$ controls the strength of the document length normalization.
@@ -141,22 +151,22 @@ The parameter $k_1$ controls the rate of term saturation. Here, the value $k_1 =
 \cite{robertson2009bm25}
 
 \subsection{Query processing}
-When processing a query, first for the BM25 step and the spelling correction, the existing cache is used to load the JSON file.
-The file contains the documents as well as the vocabulary inside those documents. Here, this vocabulary already gets separated into buckets for the
-later spelling correction. This usage of the cache allows for a significant speedup since the JSON file is only loaded and parsed once.
-Once the data is loaded, the tokens get preprocessed with the same preprocessing as when indexing the documents. Once this is done, the spelling
-of the query terms is checked. When checking a term, the algorithm first checks if the term exists in the vocabulary, since the vocabulary is built
-using the indexed pages. The vocabulary uses the stemmed terms. If a page contains that term, it can be identified as a correct spelling. In this case,
-no spelling correction is needed. If, however, the term is not in the vocabulary, it is assumed that the word contains a spelling mistake, and the
-algorithm tries to fix this spelling mistake.
-In order to avoid changing the word too much, if the length of the word is less than five, only one character can be changed; otherwise, up to two.
-To speed up the process, the buckets are used. Those buckets are sorted by the first letter and the length of the word. That way, only valid candidates have to be evaluated.
-For a further speed up the algorithm allows for an early exit if it is no longer possible to find a better term.
-Next, the Levenshtein Edit Distance \cite{levenshtein1966} is computed. This value indicates how similar two words are.
-This is used to find the best candidate. If two words have the same Edit Distance, their frequency is used as a tie-breaker,
-since the assumption is that a user is more likely to search for a more frequently used term. If the Edit Distance for the best candidate
+For BM25 and spelling correction, the existing cache is used to load the JSON file.
+The file contains the documents and their vocabulary. This vocabulary is separated into buckets for
+later spelling correction. Using the cache provides a significant speedup because the JSON file is loaded and parsed only once.
+Once the data is loaded, the query tokens are preprocessed in the same way as the indexed documents. The spelling
+of each query term is then checked. The algorithm first checks whether the term exists in the vocabulary, which is built
+from the indexed pages and contains stemmed terms. If it exists, the spelling is considered correct and
+no correction is needed. Otherwise, the term is treated as a possible spelling mistake, and the
+algorithm tries to correct it.
+To avoid changing a word too much, at most one character can be changed in words shorter than five characters and at most two in longer words.
+The buckets are sorted by first letter and word length, so only suitable candidates have to be evaluated.
+For further speedup, the algorithm exits early if it is no longer possible to find a better term.
+Next, the Levenshtein edit distance \cite{levenshtein1966} is computed to measure how similar two words are.
+This is used to find the best candidate. If two words have the same edit distance, their frequency is used as a tie-breaker,
+since the assumption is that a user is more likely to search for a more frequently used term. If the edit distance for the best candidate
 is above the number of characters that are allowed to be changed, the word will not be changed to avoid changing the query too much.
-After a term has been corrected the word gets stemmed again to ensure the resulting term is the same as without the spelling mistake,
+After a term has been corrected, the word is stemmed again to ensure the resulting term is the same as without the spelling mistake,
 thus the search results are also identical.
 After this, the BM25 score is computed, and the result is then used by the reranking algorithm.
 
@@ -186,9 +196,9 @@ where $Q$ is the query tokens, $T$ represents the title tokens, and $H$ represen
 
 \textbf{PRF} is performed by taking the first 30 BM25 candidates. 
 Only the strongest from each domain is considered. Up to 5 documents are selected.
-From these 5 terms are collected from their titles and headings.
-Query terms, generic terms and terms that are too rare or too frequent in the corpus are removed.
-At most three expansilon terms are retained.
+Terms are collected from the titles and headings of these five documents.
+Query terms, generic terms, and terms that are too rare or too frequent in the corpus are removed.
+At most three expansion terms are retained.
 
 \textbf{Link Score} represents the authority of a document within the crawled collection. 
 It is defined as the number of indexed documents that link to the candidate.
@@ -196,8 +206,8 @@ It is defined as the number of indexed documents that link to the candidate.
 \textbf{Tübingen Centrality} measures how strongly a document is focused on Tübingen. 
 It is based on the occurrence of the normalized "tubingen" term in important document fields.
 
-\textbf{Foreign Location Penalty} The Foreign Location Penalty reduces the score of documents that appear to focus on another city, such as Stuttgart, Munich, Heidelberg, or Freiburg.
-The penalty depends on where the foreign location occurs. Stronger penalties for title, then headings and URL.
+\textbf{Foreign Location Penalty} reduces the score of documents that appear to focus on another city, such as Stuttgart, Munich, Heidelberg, or Freiburg.
+The penalty depends on where the foreign location occurs. Matches in the title receive the strongest penalty, followed by headings and the URL.
 
 \subsection{Domain diversification}
 To prevent the result list from being dominated by a single website, we added a soft
@@ -208,9 +218,6 @@ We intentionally avoided a strict domain limit because several pages from the sa
 website may still be highly relevant. This approach improves result variety while
 ensuring that relevant documents remain within the top 100 results used for evaluation.
 
-
-
-\newpage
 
 \section{Frontend and Hosting}
 
@@ -291,6 +298,24 @@ Vladimir I. Levenshtein.
 \textit{Binary Codes Capable of Correcting Deletions, Insertions and Reversals}.
 Soviet Physics Doklady,
 10(8):707--710, 1966.
+
+\bibitem{streamlit}
+Streamlit Inc.
+Streamlit Documentation.
+\url{https://docs.streamlit.io/}.
+Accessed: August 5, 2026.
+
+\bibitem{oracleCompute}
+Oracle Corporation.
+Oracle Cloud
+\url{https://docs.oracle.com/}.
+Accessed: August 5, 2026.
+
+\bibitem{supabaseStorage}
+Supabase.
+\textit{Storage}.
+\url{https://supabase.com/docs/guides/storage}.
+Accessed: August 5, 2026.
 
 \end{thebibliography}
 
