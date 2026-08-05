@@ -10,6 +10,7 @@
 \usepackage{amsmath}
 \usepackage{xcolor}
 \usepackage{fancyhdr}
+\usepackage{float}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{RuleGray}{gray}{0.75}
@@ -43,26 +44,66 @@
 \end{abstract}
 
 \section{Data Collection and Crawling}
+    
+  \subsection{Corpus scope and seeds}
+    The scope of our project is to build a search engine that indexes English-language websites related to Tübingen. To create an initial set of seed URLs for the crawler, we first collected a list of around 50 keywords that represent different topics connected to the city. These keywords included areas such as attractions, the university, student life, hospitals, culture, and other relevant subjects. It was important to choose keywords that cover a wide range of topics so that the resulting corpus is as diverse as possible.
+    
+    For each keyword, we searched Google using the query ``Tübingen + keyword'' and manually recorded the first 10 search results. After collecting all URLs, duplicate links were removed. Starting from around 50 keywords, this process resulted in a final seed list containing 449 unique URLs, which served as the starting point for our crawler.
 
-\subsection{Corpus scope and seeds}
+    We had one manual adjustment of the seed list and put \href{https://scells.me/}{https://scells.me/} into it manually, bringing our total to 450.
+      
+  \subsection{Crawler design}
+    During development, we implemented four different crawler versions. To evaluate them, each version was allowed to run for about 15 hours under the same conditions. Based on the results, we selected the best-performing version for our final large-scale crawl. Since the results chapter compares these versions, we briefly describe each of them here.
+    
+    Version 1 followed the crawler architecture introduced in the lecture. It used a prioritized frontier to decide which URLs to visit next and respected website politeness by enforcing crawl delays and setting a custom user agent. Instead of relying on the language information provided by websites, we used the \texttt{langdetect} Python library to ensure that only English pages were crawled. The crawler also respected \texttt{robots.txt} files by avoiding blocked paths, following crawl delays, and caching each \texttt{robots.txt} file to avoid downloading it repeatedly. Duplicate content was not removed during crawling but later during preprocessing, meaning that the crawler temporarily stored a larger \texttt{raw\_pages.json} file in exchange for faster crawling. To improve crawling speed, the crawler used multiple worker threads.
+    
+    Version 2 was based on Version 1 but improved the detection of Tübingen-related pages. Instead of a simple regular expression, it used a larger regular expression that also matched common spelling variations and OCR-like errors, such as ``Tueeebingen'' or ``t123bingen''. The idea was to identify more relevant pages even if the city name was written incorrectly or if stylistic choices of the author changed the spelling of Tübingen (such as in a blog post).
+    
+    Version 3 focused mainly on improving performance. While testing Version 1, we noticed that sorting the prioritized frontier became increasingly expensive as it grew larger. Since the main thread was responsible for maintaining the sorted frontier, it often blocked the worker threads while performing these operations. We therefore tried a different approach. Instead of one globally prioritized frontier, we split it into two frontiers: a high-priority frontier containing links extracted from pages that were related to Tübingen, and a low-priority frontier containing links from unrelated pages.
+    
+    The frontier itself was also redesigned. Instead of storing every URL in one large data structure, it became a list of domain objects. Each object contained a queue of URLs for a single domain together with information such as the last access time to enforce politeness delays. To select the next URL, the crawler randomly chose a domain that was ready to be visited and then processed the next URL from that domain. This naturally prevented the crawler from spending most of its time on very large websites. For example, even if the University of Tübingen website contained thousands of links while another domain only contained a handful, both domains had an equal chance of being selected.
+    
+    This design comes with clear trade-offs. The main advantage is performance. Even with millions of URLs in the frontier, selecting the next domain depends only on the number of unique domains rather than the total number of URLs. Operations within each domain queue are also very efficient, allowing the main thread to spend much less time managing the frontier and more time supplying work to the worker threads. The downside is that we lose fine-grained prioritization within a domain. Once a domain is selected, URLs are processed in the order they were discovered instead of globally prioritizing the most relevant URL. This means that a URL containing the word ``Tübingen'' might be processed after less relevant URLs from the same website. Although this is a disadvantage, the large performance improvement outweighed the loss of prioritization. In our experiments, Version 3 crawled roughly four to five times as many pages as Versions 1 and 2 during the same 15-hour runtime.
+    
+    Version 4 built directly on the ideas from Version 3 and introduced two different types of worker threads called Horses and Explorers. Horses behaved exactly as before by selecting a random domain that was ready to be crawled and processing its next URL. Explorers, on the other hand, searched for ready domains with only a small number of remaining URLs and processed those first. Since the Horses would eventually reach these smaller domains anyway, this change was not expected to have a large effect on the overall crawl. Instead, the Explorers were intended to discover new domains slightly earlier and improve exploration of the web.
 
-\subsection{Crawler design}
+    A blacklist for domains was also implemented, containing \href{https://archive.org}{https://archive.org}.
+  
+  \subsection{Results}
 
-\subsection{Filtering and stored page representation}
+    We wrote ourselves some tools to analyse our crawlers. These tools can be found in \textit{scripts/crawler\_analysis.py}. These are a few stats aswell as figures.
 
-\begin{table}[h]
-\centering
-\caption{Final corpus summary.}
-\begin{tabularx}{0.88\linewidth}{@{}X r X r@{}}
-\toprule
-Saved English pages & & Attempted URLs & \\
-Pages with body text & & Unique domains & \\
-Median body length & & Crawl duration & \\
-\bottomrule
-\end{tabularx}
-\end{table}
+    The following table shows the general performance of a crawler-version after about 10 hours of runtime. Impressively enough the number of unique domains of the base version and regex version (both using the single frontier+prioritization) cannot be matched by any of the coming crawler versions. On the other side, the effective throughput of new pages is nearly 4x the first version of our crawler.
 
-\newpage
+    A fair comparrison between V2 and V4 shows, that we gain about 3.57x the amount of pages while loosing about 4\% of unique domains. A tradeoff we decided to go with. (WHich is also not taking into account that the more links are in our frontier the slower the V1 and V2 crawlers will become).
+      
+      \begin{table}[H]
+        \centering
+        \begin{tabular}{c|c|c|c|c}
+              \textbf{Crawler} & \textbf{Runtime (minutes)} & \textbf{\# domains} & \textbf{\# raw pages} & \textbf{Pages per minute} \\ \hline
+              Base (V1) (blue) & 632 & 471 & 5187 & 8.21 \\
+              Regex (V2) (orange) & 583 & 484 & 5201 & 8.92 \\
+              Harsh Frontier (V3) (red) & 635 & 416 & 20001 & 31.5 \\
+              Horses \& Explorers (V4) (purple) & 628 & 452 & 20000 & 31.85
+        \end{tabular}
+        \caption{Crawler Version comparison on the metrics of number of raw pages and number of unique domains.}
+      \end{table}
+      
+      \begin{figure}[H]
+        \centering
+        \includegraphics[width=0.9\linewidth]{img/mse_crawler_1.png}
+        \caption{Average time between finding new pages with a window of 50 to smooth the curve. (Lower is better)}
+      \end{figure}
+
+      \begin{figure}[H]
+        \centering
+        \includegraphics[width=0.9\linewidth]{img/mse_crawler_2.png}
+        \caption{Time between discovering new domains with a sliding window of 50 to smooth the curve. (Lower is better) \\ Also visible here is the total amount of domains found.}
+      \end{figure}
+
+      Letting the crawler run for TODO hours resulted in a total of TODO raw pages (reminder that there will be duplicates in here, this step is still done in preprocessing) from a total of TODO unique domains.
+    
+    \newpage
 
 \section{Preprocessing and Index Construction}
 
