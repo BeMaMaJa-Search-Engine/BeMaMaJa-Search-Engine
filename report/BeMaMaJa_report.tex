@@ -41,13 +41,13 @@
 \end{center}
 
 \begin{abstract}
-  This project presents the implementation of a search engine from scratch. It starts by implementing a web crawler that uses a given seed set to retrieve web pages.
-To avoid crawling undesirable websites, a blacklist is used, and the crawler respects the robots.txt protocol. To improve performance, the crawler employs multiprocessing.
+  This project presents a search engine built from scratch for English-language web pages related to T\"ubingen. It starts with a web crawler that uses a given seed set to retrieve web pages.
+To avoid crawling undesirable websites, a blacklist is used, and the crawler respects the robots.txt protocol. To improve performance, the crawler uses multiple worker threads.
 For indexing, the retrieved pages are tokenized, stop words are removed, and the remaining words are stemmed before constructing the inverted index.
 The retrieval stage is based on the BM25 algorithm with an integrated spelling correction mechanism. For re-ranking,
-we apply field boosts, link counts and PRF and combine them with the BM25 score.
-The frontend features a clean and modern user interface. Additionally, it provides AI-powered features
-that offer users supplementary information about the retrieved search results.
+we combine the BM25 score with field boosts, link counts, PRF, location-aware ranking signals and soft domain diversification.
+The frontend provides a modern interface with controllable AI-generated page summaries,
+explainable ranking signals and direct batch-file upload.
 \end{abstract}
 
 \section{Data Collection and Crawling}
@@ -138,12 +138,6 @@ The final BM25 score is obtained by summing the contribution of each query term.
 The parameter $b$ controls the strength of the document length normalization.
 The value $b = 0.75$ is chosen since it is the default value in the literature.
 The parameter $k_1$ controls the rate of term saturation. Here, the value $k_1 = 1.2$ is chosen since it is the default value in the literature.
-The BM25 score for a document $d$ and a query $q$ is computed as follows:
-
-\[
-\mathrm{BM25}(d,q)=\sum_{t\in q}IDF(t)
-\frac{tf_{t,d}(k_1+1)}{tf_{t,d}+k_1\left(1-b+b\frac{|d|}{\mathrm{avgdl}}\right)}.
-\]
 \cite{robertson2009bm25}
 
 \subsection{Query processing}
@@ -158,27 +152,7 @@ algorithm tries to fix this spelling mistake.
 In order to avoid changing the word too much, if the length of the word is less than five, only one character can be changed; otherwise, up to two.
 To speed up the process, the buckets are used. Those buckets are sorted by the first letter and the length of the word. That way, only valid candidates have to be evaluated.
 For a further speed up the algorithm allows for an early exit if it is no longer possible to find a better term.
-Next, the Levenshtein Edit Distance \cite{levenshtein1966} is computed. This value indicates how similar two words are. $d(i,j)$ is the Levenshtein Edit Distance
-between the prefixes $s_{1...i}$ and $t_{1...j}$. $s_i$ and $t_j$ are the $i$-th and $j$-th characters of the words.
-
-\[
-d(i,j)=
-\begin{cases}
-\max(i,j), & \text{if } \min(i,j)=0,\\[6pt]
-\min
-\begin{cases}
-d(i-1,j)+1,\\
-d(i,j-1)+1,\\
-d(i-1,j-1)+
-\begin{cases}
-0, & \text{if } s_i=t_j,\\
-1, & \text{if } s_i\neq t_j,
-\end{cases}
-\end{cases}
-& \text{otherwise.}
-\end{cases}
-\]
-
+Next, the Levenshtein Edit Distance \cite{levenshtein1966} is computed. This value indicates how similar two words are.
 This is used to find the best candidate. If two words have the same Edit Distance, their frequency is used as a tie-breaker,
 since the assumption is that a user is more likely to search for a more frequently used term. If the Edit Distance for the best candidate
 is above the number of characters that are allowed to be changed, the word will not be changed to avoid changing the query too much.
@@ -225,29 +199,41 @@ It is based on the occurrence of the normalized "tubingen" term in important doc
 \textbf{Foreign Location Penalty} The Foreign Location Penalty reduces the score of documents that appear to focus on another city, such as Stuttgart, Munich, Heidelberg, or Freiburg.
 The penalty depends on where the foreign location occurs. Stronger penalties for title, then headings and URL.
 
+\subsection{Domain diversification}
+To prevent the result list from being dominated by a single website, we added a soft
+domain-diversification step after reranking. The first result from each domain keeps
+its full score. Further results from the same domain are progressively penalized using
+a factor of $0.93$ per repetition. The penalty is limited to a minimum factor of $0.75$.
+We intentionally avoided a strict domain limit because several pages from the same
+website may still be highly relevant. This approach improves result variety while
+ensuring that relevant documents remain within the top 100 results used for evaluation.
+
 
 
 \newpage
 
 \section{Frontend and Hosting}
 
-\begin{center}
-\fbox{\parbox{0.94\linewidth}{\textbf{Frontend innovations.} A good search engine should not only return relevant links, but also help users understand and work with the results. We added several innovations, mainly focused on controllable AI summaries for individual pages and clear insight into why each result appears at its position.}}
-\end{center}
+\textbf{Frontend innovations.} A good search engine should not only return relevant 
+links, but also help users understand and work with the results. This is why we 
+added several helpful innovations, mainly focused on controllable AI summaries for 
+individual pages and clear insight into why each result appears at its position.
 
-% \begin{center}
-% \fbox{\includegraphics[width=0.78\linewidth,height=62mm,keepaspectratio]{../output/pdf/assets/ui-explanation.png}}\\[3pt]
-% {\small\textbf{Figure 1.} Search interface with AI controls, result scores, and an expanded ranking explanation.}
-% \end{center}
+\begin{center}
+\includegraphics[height=55mm]{img/frontend.png}\hfill
+\includegraphics[height=55mm]{img/frontend-insights.png}\\[3pt]
+{\small\textbf{Figure 1.} Search interface showing spelling correction, Found and Not found query-term badges, and an AI-generated result summary (left), and the expanded ranking explanation with its score breakdown (right).}
+\end{center}
 
 \subsection{Interactive interface}
 
-\textbf{AI summaries.} Each result card offers an \emph{AI Summary} button backed by
+\textbf{AI summaries.} Each result card has an \emph{AI Summary} button backed by
 the Gemini API. \emph{Summary + relevance} connects the page summary to the query,
 \emph{Summary only} gives a neutral overview, and \emph{Custom focus} accepts a short
-prompt, for example about opening hours. A custom animation is shown during generation.
-Here, page content means the crawled body text from the raw-page data; it is used only
-for AI summaries, not for retrieval or ranking. When unavailable, the snippet is used,
+user prompt, for example about opening hours or entrance fees. A custom animation is 
+shown during AI generation. The summaries use cached page content, meaning the crawled
+body text from the raw-page data; this content is not used for retrieval or ranking.
+When unavailable, the snippet is used,
 and if the available text is too short, the page can be fetched live. If Gemini is
 unavailable or not configured, a local extractive summary is shown instead. Summaries
 are cached to avoid unnecessary API calls.
@@ -256,39 +242,40 @@ are cached to avoid unnecessary API calls.
 A \emph{Found} badge lists the exact matched query terms, while \emph{Not found} lists
 the remaining terms. Applied spelling corrections are shown above the results so users
 know which terms were used for retrieval. For further detail, the expandable
-\emph{Why this result?} view reports textual match evidence and a normalized breakdown
+\emph{Why this result?} view shows textual match evidence and a normalized breakdown
 of every active component: BM25, Field Boost, PRF, LinkScore, T\"ubingen relevance and
 foreign-location penalty.
 
 \textbf{Controls and fallback modes.} Users can select between 5 and 100 displayed
-results. The sidebar reports search time, index size, active ranking components, data
+results. The sidebar shows search time, index size, active ranking components, data
 source (Supabase or local), Gemini status (ready or not configured), and page-content
-loading progress (crawled body text for AI summaries). The
-required batch file can be uploaded there and is returned as a downloadable
-\texttt{results.tsv} after validation and retrieval. Runtime data normally comes from
-a private Supabase bucket. Starting with \texttt{--local} disables remote access, and
+loading progress (crawled body text for AI summaries). The interface accepts batch-file
+uploads and returns the retrieved results as a downloadable \texttt{results.tsv}. Runtime
+data normally comes from
+a private Supabase bucket. Starting with \texttt{--local} disables Supabase, and
 local index files provide a fallback if Supabase cannot be used. These options keep the
-service stable: if one feature or external service fails, the rest of the search
+service reliable: if one feature or external service fails, the rest of the search
 continues to work so the user notices as little of the failure as possible.
 
 \subsection{Hosting and resource management}
 
 When a user opens the hosted version, DuckDNS resolves the domain to the public IP of
 the Oracle VM. Nginx, the reverse proxy, forwards the browser request to Streamlit on
-the same VM. Streamlit serves the interface and performs retrieval using the in-memory
-index. It downloads the compressed index and raw-page shards from Supabase Storage and
-sends summary requests to Gemini. The API key remains securely on our server; running
-locally requires a separate key.
+the same VM. At startup, Streamlit downloads the compressed index and raw-page shards
+from Supabase Storage, caches the index in RAM, and loads raw-page content gradually
+for AI summaries. It reuses the cached index for retrieval and sends summary requests
+to Gemini. The API key stays on the server; local use requires a separate key.
 
 \textbf{Index caching.} Caching the loaded index was our largest runtime improvement:
 it remains in RAM across Streamlit reruns and is reused for all searches. This reduced
 search times from about ten seconds to usually below one second.
 
-\textbf{Startup memory.} Separately, as the index and raw pages grew, combining downloaded
-shards in RAM caused a large startup peak. They are now streamed into a disk cache first,
-while raw pages are processed gradually and only document IDs and body text needed for
-summaries are retained. This lowers peak RAM, makes search available earlier, and
-improves scalability without keeping unnecessary page data in memory.
+\textbf{Startup memory.} As the data grew, combining downloaded shards in RAM caused a
+large startup peak. To avoid this, downloaded shards are streamed to a disk cache instead
+of being combined in RAM. The index is then loaded into RAM and cached, so users can search
+as soon as it is ready. Page content, which is only needed for AI summaries, is processed
+gradually in the background. Loading all raw pages therefore takes longer, but this avoids
+the RAM peak and improves scalability.
 
 \newpage
 \begin{thebibliography}{9}
