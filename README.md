@@ -351,7 +351,7 @@ Example JSON:
 ### 6. Re-Ranking
 
 - Input: BM25 candidate results
-- Processing: add field boosts, pseudo relevance feedback, link and Tuebingen relevance signals, then apply a progressive domain penalty. The first result from one domain is unchanged; later results are increasingly reduced down to a minimum factor of 40 percent, but never removed by a hard domain limit.
+- Processing: add field boosts, conservative pseudo relevance feedback from strong candidates on different domains, link and Tuebingen relevance signals, then apply a progressive domain penalty. PRF terms must occur in at least two feedback documents; very rare and very common terms are discarded, and at most three terms are used. The first result from one domain is unchanged; later results are increasingly reduced down to a minimum factor of 75 percent, but never removed by a hard domain limit.
 - Output: final ranked result list
 - Files: `src/reranking.py`, `src/diversify.py`, `src/retrieval.py`
 

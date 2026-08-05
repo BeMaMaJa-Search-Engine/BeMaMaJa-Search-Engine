@@ -3,6 +3,7 @@ import math
 from collections import Counter
 
 from src.diversify import diversify_results
+from src.utils import get_domain
 
 NON_TUEBINGEN_LOCATION_TERMS = {
     "berlin",
@@ -152,11 +153,17 @@ def collect_prf_terms(
     document_frequencies: dict[str, int] | None = None,
     num_docs: int = 0,
     feedback_docs: int = 5,
-    max_terms: int = 5,
-    min_feedback_field_boost: float = 0.5,
+    scan_depth: int = 30,
+    max_terms: int = 3,
+    min_feedback_document_frequency: int = 2,
+    min_corpus_document_frequency: int = 20,
+    max_document_frequency_ratio: float = 0.15,
+    max_heading_feedback_tokens: int = 50,
+    title_term_weight: float = 2.0,
+    heading_term_weight: float = 1.0,
     force_tuebingen_filter: bool = False,
 ) -> list[str]:
-    """Collect IDF-weighted pseudo relevance feedback terms from top-ranked fields."""
+    """Collect conservative PRF terms from strong, domain-diverse candidates."""
     generic_tokens = {
         "thing",
         "page",
@@ -164,35 +171,94 @@ def collect_prf_terms(
         "contact",
         "legal",
         "compani",
+        "best",
+        "guid",
         "menu",
+        "official",
+        "popular",
         "search",
         "result",
+        "travel",
+        "trip",
+        "visit",
+        "websit",
     }
     query_token_set = set(query_tokens)
+    content_query_tokens = query_token_set - {"tubingen"}
     require_tuebingen_centrality = force_tuebingen_filter or query_is_tuebingen_related(query_tokens)
-    term_counts: Counter[str] = Counter()
     document_frequencies = document_frequencies or {}
 
-    for candidate in candidates[:feedback_docs]:
+    # Keep only the strongest candidate per domain. BM25 remains the main
+    # confidence signal, while query coverage in title/headings adds trust.
+    scanned_candidates = candidates[:scan_depth]
+    top_bm25_score = max(
+        (float(candidate.get("bm25_score", 0.0) or 0.0) for candidate in scanned_candidates),
+        default=0.0,
+    )
+    domain_feedback_candidates: dict[str, tuple[float, int, dict]] = {}
+
+    for position, candidate in enumerate(scanned_candidates):
         doc_id = candidate.get("doc_id")
         indexed_doc = doc_lookup.get(str(doc_id), {})
-        if require_tuebingen_centrality and not is_tuebingen_central_document(indexed_doc):
+        title_tokens = set(indexed_doc.get("title_tokens", []))
+        heading_tokens = set(
+            indexed_doc.get("heading_tokens", [])[:max_heading_feedback_tokens]
+        )
+        url = (
+            indexed_doc.get("canonical_url")
+            or indexed_doc.get("fetched_url")
+            or indexed_doc.get("url")
+            or candidate.get("url")
+            or ""
+        )
+        normalized_url = str(url).lower()
+        if require_tuebingen_centrality and not (
+            "tubingen" in title_tokens
+            or "tuebingen" in normalized_url
+            or "tubingen" in normalized_url
+        ):
             continue
 
-        title_tokens = indexed_doc.get("title_tokens", [])
-        heading_tokens = indexed_doc.get("heading_tokens", [])
+        matched_terms = set(candidate.get("matched_terms", []))
+        required_query_tokens = content_query_tokens or query_token_set
+        if required_query_tokens and not (
+            required_query_tokens & (matched_terms | title_tokens | heading_tokens)
+        ):
+            continue
 
         feedback_field_boost = compute_field_boost(
-            query_tokens,
+            list(required_query_tokens),
             title_tokens,
             heading_tokens,
         )
-        if feedback_field_boost < min_feedback_field_boost:
-            continue
+        bm25_score = float(candidate.get("bm25_score", 0.0) or 0.0)
+        normalized_bm25 = bm25_score / top_bm25_score if top_bm25_score > 0.0 else 0.0
+        feedback_confidence = (0.7 * normalized_bm25) + (0.3 * feedback_field_boost)
 
-        feedback_tokens = title_tokens + heading_tokens
+        domain = get_domain(str(url)) or f"__unknown_domain_{doc_id}_{position}"
+        existing = domain_feedback_candidates.get(domain)
+        if existing is None or feedback_confidence > existing[0]:
+            domain_feedback_candidates[domain] = (
+                feedback_confidence,
+                position,
+                indexed_doc,
+            )
 
-        for token in feedback_tokens:
+    feedback_candidates = sorted(
+        domain_feedback_candidates.values(),
+        key=lambda item: (-item[0], item[1]),
+    )[:feedback_docs]
+
+    term_feedback_documents: Counter[str] = Counter()
+    term_field_weights: Counter[str] = Counter()
+
+    for _, _, indexed_doc in feedback_candidates:
+        title_tokens = set(indexed_doc.get("title_tokens", []))
+        heading_tokens = set(
+            indexed_doc.get("heading_tokens", [])[:max_heading_feedback_tokens]
+        )
+
+        for token in title_tokens | heading_tokens:
             if token in query_token_set:
                 continue
             if len(token) < 3:
@@ -201,18 +267,42 @@ def collect_prf_terms(
                 continue
             if require_tuebingen_centrality and token in NON_TUEBINGEN_LOCATION_TERMS:
                 continue
-            term_counts[token] += 1
 
-    if not term_counts:
+            term_feedback_documents[token] += 1
+            if token in title_tokens:
+                term_field_weights[token] += title_term_weight
+            if token in heading_tokens:
+                term_field_weights[token] += heading_term_weight
+
+    eligible_terms = {
+        term: feedback_count
+        for term, feedback_count in term_feedback_documents.items()
+        if feedback_count >= min_feedback_document_frequency
+    }
+    if not eligible_terms:
         return []
 
-    def prf_term_score(item: tuple[str, int]) -> tuple[float, int, str]:
+    def prf_term_score(item: tuple[str, int]) -> tuple[float, float, int, str]:
         term, feedback_count = item
-        df = document_frequencies.get(term, 0)
+        df = document_frequencies.get(term, feedback_count)
+        required_corpus_frequency = min(
+            min_corpus_document_frequency,
+            max(min_feedback_document_frequency, math.ceil(num_docs * 0.004)),
+        )
+        if num_docs > 0 and (
+            df < required_corpus_frequency
+            or df / num_docs > max_document_frequency_ratio
+        ):
+            return (-1.0, -1.0, feedback_count, term)
         idf = math.log((num_docs + 1) / (df + 1)) if num_docs > 0 else 1.0
-        return (feedback_count * idf, feedback_count, term)
+        evidence_score = feedback_count * term_field_weights[term]
+        return (evidence_score, idf, feedback_count, term)
 
-    ranked_terms = sorted(term_counts.items(), key=prf_term_score, reverse=True)
+    ranked_terms = [
+        item
+        for item in sorted(eligible_terms.items(), key=prf_term_score, reverse=True)
+        if prf_term_score(item)[0] >= 0.0
+    ]
     return [term for term, _ in ranked_terms[:max_terms]]
 
 

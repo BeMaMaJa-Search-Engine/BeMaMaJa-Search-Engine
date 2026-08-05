@@ -151,7 +151,7 @@ def add_css() -> None:
         .result-card-marker {
             display: none;
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .result-card-marker):has(> div[data-testid="stLayoutWrapper"] div[data-testid="stExpander"]) {
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .result-card-marker) {
             border: 1px solid #334155;
             border-radius: 14px;
             background: #111827;
@@ -852,6 +852,10 @@ def main() -> None:
         st.info("Enter a query to search the local JSON index.")
         return
 
+    # Replace the previous result region immediately. Otherwise Streamlit keeps
+    # stale cards visible while a slower spelling-correction search is running.
+    search_output = st.empty()
+
     search_key = (query, top_k, index_mtime)
     search_started = time.perf_counter()
     retrieval_output = cached_retrieve(query, top_k, index_mtime)
@@ -867,16 +871,6 @@ def main() -> None:
     corrected_query_tokens = retrieval_output.get("query_tokens", query_tokens)
     corrections = spelling_corrections(query_terms, query_tokens, corrected_query_tokens)
     prf_terms = results[0].get("expansion_terms", []) if results else []
-
-    if corrections:
-        correction_text = ", ".join(
-            f"{esc(original)} &rarr; {esc(corrected)}" for original, corrected in corrections
-        )
-        st.markdown(
-            f'<div class="search-correction"><strong>Spelling corrected:</strong> '
-            f'Searching for {correction_text}</div>',
-            unsafe_allow_html=True,
-        )
 
     prepared_results = []
     for result in results:
@@ -971,23 +965,34 @@ def main() -> None:
             if page_content_status["warning"]:
                 st.caption(page_content_status["warning"])
 
-    metric_cards(runtime, len(documents), len(prepared_results), index_source)
+    with search_output.container():
+        if corrections:
+            correction_text = ", ".join(
+                f"{esc(original)} &rarr; {esc(corrected)}"
+                for original, corrected in corrections
+            )
+            st.markdown(
+                f'<div class="search-correction"><strong>Spelling corrected:</strong> '
+                f'Searching for {correction_text}</div>',
+                unsafe_allow_html=True,
+            )
 
-    if not prepared_results:
-        st.warning("No results found for this query.")
-        return
+        metric_cards(runtime, len(documents), len(prepared_results), index_source)
 
-    for result, doc, body in prepared_results:
-        render_card(
-            result,
-            doc,
-            body,
-            query,
-            query_terms,
-            corrected_query_tokens,
-            ai_mode,
-            custom_instruction,
-        )
+        if not prepared_results:
+            st.warning("No results found for this query.")
+        else:
+            for result, doc, body in prepared_results:
+                render_card(
+                    result,
+                    doc,
+                    body,
+                    query,
+                    query_terms,
+                    corrected_query_tokens,
+                    ai_mode,
+                    custom_instruction,
+                )
 
 
 if __name__ == "__main__":

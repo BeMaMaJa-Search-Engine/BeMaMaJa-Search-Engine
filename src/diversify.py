@@ -41,7 +41,7 @@ def diversify_results(
     results: list[dict],
     unpenalized_results: int = 1,
     decay: float = 0.93,
-    minimum_factor: float = 0.40,
+    minimum_factor: float = 0.75,
 ) -> list[dict]:
     """Diversify a ranking with a progressive soft penalty per domain.
 
