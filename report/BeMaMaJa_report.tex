@@ -41,6 +41,13 @@
 \end{center}
 
 \begin{abstract}
+  This project presents the implementation of a search engine from scratch. It starts by implementing a web crawler that uses a given seed set to retrieve web pages.
+To avoid crawling undesirable websites, a blacklist is used, and the crawler respects the robots.txt protocol. To improve performance, the crawler employs multiprocessing.
+For indexing, the retrieved pages are tokenized, stop words are removed, and the remaining words are stemmed before constructing the inverted index.
+The retrieval stage is based on the BM25 algorithm with an integrated spelling correction mechanism. For re-ranking,
+we apply field boosts, link counts and PRF and combine them with the BM25 score.
+The frontend features a clean and modern user interface. Additionally, it provides AI-powered features
+that offer users supplementary information about the retrieved search results.
 \end{abstract}
 
 \section{Data Collection and Crawling}
@@ -136,14 +143,83 @@ Index size / build time & \\
 \section{Retrieval and Re-ranking}
 
 \subsection{Manual BM25 first stage}
+BM25 is used as the first-stage ranking as it is a standard algorithm in practice.
+It computes the Inverse Document Frequency (IDF) to give rare words a higher value.
+Since the search engine is T\"ubingen based the IDF for T\"ubingen is boosted by the factor $2$.
+The Term Frequency (TF) is used to give words that appear more often a higher value. 
+The final BM25 score is obtained by summing the contribution of each query term.
+The parameter $b$ controls the strength of the document length normalization.
+The value $b = 0.75$ is chosen since it is the default value in the literature.
+The parameter $k_1$ controls the rate of term saturation. Here, the value $k_1 = 1.2$ is chosen since it is the default value in the literature.
+The BM25 score for a document $d$ and a query $q$ is computed as follows:
+
 \[
-\mathrm{BM25}(d,q)=\sum_{t\in q}\log\!\left(1+\frac{N-df_t+0.5}{df_t+0.5}\right)
+\mathrm{BM25}(d,q)=\sum_{t\in q}IDF(t)
 \frac{tf_{t,d}(k_1+1)}{tf_{t,d}+k_1\left(1-b+b\frac{|d|}{\mathrm{avgdl}}\right)}.
 \]
+\cite{robertson2009bm25}
 
 \subsection{Query processing}
+When processing a query, first for the BM25 step and the spelling correction, the existing cache is used to load the JSON file.
+The file contains the documents as well as the vocabulary inside those documents. Here, this vocabulary already gets separated into buckets for the
+later spelling correction. This usage of the cache allows for a significant speedup since the JSON file is only loaded and parsed once.
+Once the data is loaded, the tokens get preprocessed with the same preprocessing as when indexing the documents. Once this is done, the spelling
+of the query terms is checked. When checking a term, the algorithm first checks if the term exists in the vocabulary, since the vocabulary is built
+using the indexed pages. The vocabulary uses the stemmed terms. If a page contains that term, it can be identified as a correct spelling. In this case,
+no spelling correction is needed. If, however, the term is not in the vocabulary, it is assumed that the word contains a spelling mistake, and the
+algorithm tries to fix this spelling mistake.
+In order to avoid changing the word too much, if the length of the word is less than five, only one character can be changed; otherwise, up to two.
+To speed up the process, the buckets are used. Those buckets are sorted by the first letter and the length of the word. That way, only valid candidates have to be evaluated.
+For a further speed up the algorithm allows for an early exit if it is no longer possible to find a better term.
+Next, the Levenshtein Edit Distance \cite{levenshtein1966} is computed. This value indicates how similar two words are. $d(i,j)$ is the Levenshtein Edit Distance
+between the prefixes $s_{1...i}$ and $t_{1...j}$. $s_i$ and $t_j$ are the $i$-th and $j$-th characters of the words.
+
+\[
+d(i,j)=
+\begin{cases}
+\max(i,j), & \text{if } \min(i,j)=0,\\[6pt]
+\min
+\begin{cases}
+d(i-1,j)+1,\\
+d(i,j-1)+1,\\
+d(i-1,j-1)+
+\begin{cases}
+0, & \text{if } s_i=t_j,\\
+1, & \text{if } s_i\neq t_j,
+\end{cases}
+\end{cases}
+& \text{otherwise.}
+\end{cases}
+\]
+
+This is used to find the best candidate. If two words have the same Edit Distance, their frequency is used as a tie-breaker,
+since the assumption is that a user is more likely to search for a more frequently used term. If the Edit Distance for the best candidate
+is above the number of characters that are allowed to be changed, the word will not be changed to avoid changing the query too much.
+After a term has been corrected the word gets stemmed again to ensure the resulting term is the same as without the spelling mistake,
+thus the search results are also identical.
+After this, the BM25 score is computed, and the result is then used by the reranking algorithm.
 
 \subsection{Second-stage innovation}
+The first improvement is adding field boosts to the score. The field boost increases the score when query terms appear in the title or the headings,
+since this indicates that the query terms are relevant to the given document. The values are normalized by the number of Queries in order to prevent
+the score to increase because of repeating terms.
+After computing the field boost for both fields, the two values are combined using a $7:3$ ratio,
+since the title is more important than the headings. For the computation, the following formulas are used,
+where $Q$ is the query, $T$ represents the title tokens, and $H$ represents the heading tokens.
+\[
+\mathrm{TitleCoverage} =
+\frac{|Q \cap T|}{|Q|}
+\]
+\[
+\mathrm{HeadingCoverage} =
+\frac{|Q \cap H|}{|Q|}
+\]
+\[
+\mathrm{FieldBoost} =
+0.7 \cdot \mathrm{TitleCoverage}
++
+0.3 \cdot \mathrm{HeadingCoverage}
+\]
 
 \subsection{Diagnostic evaluation}
 \begin{table}[h]
@@ -167,10 +243,10 @@ BM25 + innovation & & & \\
 \fbox{\parbox{0.94\linewidth}{\textbf{Frontend innovations.} A good search engine should not only return relevant links, but also help users understand and work with the results. We added several innovations, mainly focused on controllable AI summaries for individual pages and clear insight into why each result appears at its position.}}
 \end{center}
 
-\begin{center}
-\fbox{\includegraphics[width=0.78\linewidth,height=62mm,keepaspectratio]{../output/pdf/assets/ui-explanation.png}}\\[3pt]
-{\small\textbf{Figure 1.} Search interface with AI controls, result scores, and an expanded ranking explanation.}
-\end{center}
+% \begin{center}
+% \fbox{\includegraphics[width=0.78\linewidth,height=62mm,keepaspectratio]{../output/pdf/assets/ui-explanation.png}}\\[3pt]
+% {\small\textbf{Figure 1.} Search interface with AI controls, result scores, and an expanded ranking explanation.}
+% \end{center}
 
 \subsection{Interactive interface}
 
@@ -221,5 +297,22 @@ shards in RAM caused a large startup peak. They are now streamed into a disk cac
 while raw pages are processed gradually and only document IDs and body text needed for
 summaries are retained. This lowers peak RAM, makes search available earlier, and
 improves scalability without keeping unnecessary page data in memory.
+
+\newpage
+\begin{thebibliography}{9}
+
+\bibitem{robertson2009bm25}
+Stephen Robertson and Hugo Zaragoza.
+\textit{The Probabilistic Relevance Framework: BM25 and Beyond}.
+Foundations and Trends in Information Retrieval,
+3(4):333--389, 2009.
+
+\bibitem{levenshtein1966}
+Vladimir I. Levenshtein.
+\textit{Binary Codes Capable of Correcting Deletions, Insertions and Reversals}.
+Soviet Physics Doklady,
+10(8):707--710, 1966.
+
+\end{thebibliography}
 
 \end{document}
