@@ -113,35 +113,19 @@ that offer users supplementary information about the retrieved search results.
     \newpage
 
 \section{Preprocessing and Index Construction}
-      After crawling, the collected pages were preprocessed before building the search index. First, duplicate pages were removed, which reduced the dataset by about 30%. The text was then normalized by converting different spellings of Tübingen into a single representation. Afterwards, the text was tokenized, stopwords were removed, and stemming was applied to reduce words to their base forms.
+After crawling, the collected pages were preprocessed before building the search index. 
+First, exact and near-duplicate pages were removed, reducing the original dataset by approximately
+30\%. The remaining pages were filtered for clearly non-English content using language detection
+and a separate check for pages in which at least 25\% of the alphabetic characters were non-Latin.
+Title, headings, and body were then processed separately. The text was lowercased, Unicode accents
+were normalized, and different spellings of Tübingen were mapped to a common representation. 
+Finally, the text was tokenized, stopwords were removed, and Porter stemming was applied. 
+The same text-processing pipeline is also used for queries.
 
-      To further improve the quality of the dataset, language detection was run again to discard documents that were not in English. Pages containing a high proportion of non-Latin characters were also removed. Finally, Unicode normalization was applied to ensure a consistent text representation before giving the data to the next step.
-
-\subsection{Shared preprocessing contract}
-
-\subsection{Manual inverted index}
-
-\subsection{Build process and validation}
-
-\begin{table}[h]
-\centering
-\caption{Index statistics and build characteristics.}
-\begin{tabularx}{0.82\linewidth}{@{}X r@{}}
-\toprule
-Measure & Value \\
-\midrule
-Indexed documents & \\
-Vocabulary size & \\
-Average body length & \\
-Documents with outgoing links & \\
-Index size / build time & \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{Engineering justification}
-
-\newpage
+In the next step, the inverted index is constructed. In addition to the index itself, 
+statistics such as document frequencies, field lengths, and the average document length are 
+calculated and stored. Furthermore, an internal link graph is built to support link-based 
+re-ranking in later stages.
 
 \section{Retrieval and Re-ranking}
 
