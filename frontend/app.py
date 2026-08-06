@@ -409,8 +409,20 @@ def build_batch_output(file_bytes: bytes, index: dict) -> dict:
     start = time.perf_counter()
 
     for query_id, query in queries:
-        query_result = run_single_batch_query(query_id, query, index, top_k=100)
-        rows.extend(format_result_rows(query_id, query_result["results"], top_k=100))
+        query_result = run_single_batch_query(
+            query_id,
+            query,
+            index,
+            top_k=1000,
+            assume_tuebingen_context=True,
+        )
+        rows.extend(
+            format_result_rows(
+                query_id,
+                query_result["results"],
+                top_k=100,
+            )
+        )
 
     output = io.StringIO()
     csv.writer(output, delimiter="\t", lineterminator="\n").writerows(rows)
