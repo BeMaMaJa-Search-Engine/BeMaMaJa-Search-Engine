@@ -1,5 +1,5 @@
 Edit: We finished the batch support weeks ago, implemented new features, for example searching for 1000 top results only, use for reranking, then cut it at the requested number (for example top 10 or top 100).
-Also we have to pass the tübingen relevance score. It is just minor changes but change the output to the better. This version is already on main. As requested (we talked after presentation) I changed it there, but not7
+Also we have to pass the tübingen relevance score. It is just minor changes but change the output to the better. This version is already on main. As requested (we talked after presentation) I changed it there, but not
 on this fixed branch. Only when running it locally you should apply these minor changes for the best results of our engine.
 
 # Tuebingen Search Engine
